@@ -57,14 +57,14 @@ export default function ARScene() {
                     {status}
                 </div>
                 {activePoi && (
-                    <div style={{ position: 'absolute', bottom: '2rem', left: '1rem', right: '1rem', zIndex: 1001 }} className="ar-info">
+                    <div style={{ position: 'absolute', bottom: '2rem', left: '1rem', right: '1rem', zIndex: 1001, maxHeight: '80vh', overflowY: 'auto' }} className="ar-info">
                         <h3>{activePoi.name}</h3>
                         <p>{activePoi.description}</p>
                         {activePoi.file_url && activePoi.file_type === 'pdf' && (
                             <a href={`${API_URL}${activePoi.file_url}`} target="_blank" rel="noreferrer" className="btn-doc">📄 Ver Documento PDF</a>
                         )}
                         {activePoi.file_url && activePoi.file_type === 'image' && (
-                            <img src={`${API_URL}${activePoi.file_url}`} alt={activePoi.name} style={{width: '100%', borderRadius: '8px', marginTop: '0.5rem'}} />
+                            <img src={`${API_URL}${activePoi.file_url}`} alt={activePoi.name} style={{width: '100%', maxHeight: '40vh', objectFit: 'contain', borderRadius: '8px', marginTop: '0.5rem'}} />
                         )}
                         <button onClick={() => setActivePoi(null)} style={{background: 'rgba(255,255,255,0.1)', border:'1px solid white', color: 'white', padding: '0.7rem', marginTop: '1rem', borderRadius: '6px', width: '100%', cursor:'pointer', fontWeight:'bold'}}>Cerrar</button>
                     </div>
