@@ -79,7 +79,7 @@ export default function ARScene() {
                 cursor="raycaster: objects: [clickhandler]"
                 raycaster="objects: [clickhandler]"
             >
-                <a-camera gps-camera="minDistance: 1; positionMinAccuracy: 100" rotation-reader>
+                <a-camera gps-new-camera="gpsMinDistance: 1; positionMinAccuracy: 100" rotation-reader>
                     {/* Retícula visual en pantalla para clickear */}
                     <a-cursor
                       color="#4ECDC4"
@@ -96,8 +96,8 @@ export default function ARScene() {
                         key={poi.id}
                         data-id={poi.id}
                         clickhandler=""
-                        gps-entity-place={`latitude: ${poi.lat}; longitude: ${poi.lon};`}
-                        look-at="[gps-camera]"
+                        gps-new-entity-place={`latitude: ${poi.lat}; longitude: ${poi.lon};`}
+                        look-at="[gps-new-camera]"
                         scale="2 2 2"
                     >
                         {/* Poste */}
