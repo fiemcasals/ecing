@@ -16,7 +16,12 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            if [ ! -d "/root/ecing/.git" ]; then
+              rm -rf /root/ecing
+              git clone https://github.com/fiemcasals/ecing.git /root/ecing
+            fi
             cd /root/ecing
             git pull origin main
             docker compose down
+            docker compose up -d --build
             docker compose up -d --build
