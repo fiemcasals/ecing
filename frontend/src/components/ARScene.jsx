@@ -79,7 +79,7 @@ export default function ARScene() {
                 cursor="raycaster: objects: [clickhandler]"
                 raycaster="objects: [clickhandler]"
             >
-                <a-camera gps-new-camera="gpsMinDistance: 1; positionMinAccuracy: 100" rotation-reader>
+                <a-camera gps-new-camera="gpsMinDistance: 1; positionMinAccuracy: 100">
                     {/* Retícula visual en pantalla para clickear */}
                     <a-cursor
                       color="#4ECDC4"
@@ -94,12 +94,21 @@ export default function ARScene() {
                 {pois.map(poi => (
                     <a-entity
                         key={poi.id}
-                        data-id={poi.id}
-                        clickhandler=""
                         gps-new-entity-place={`latitude: ${poi.lat}; longitude: ${poi.lon};`}
                         look-at="[gps-new-camera]"
                         scale="2 2 2"
                     >
+                        {/* HITBOX INVISIBLE para el raycaster (necesita geometría para poder tocarse) */}
+                        <a-box 
+                            class="clickable"
+                            data-id={poi.id}
+                            clickhandler=""
+                            position="0 0.5 0" 
+                            width="3" 
+                            height="3" 
+                            depth="0.5" 
+                            material="opacity: 0.0; transparent: true">
+                        </a-box>
                         {/* Poste */}
                         <a-cylinder color="#CCCCCC" height="2" radius="0.05" position="0 -1 0"></a-cylinder>
                         {/* Bandera */}
