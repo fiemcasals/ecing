@@ -25,7 +25,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "8085:80"
+      - "8090:80"
     depends_on:
       - backend
     networks:
