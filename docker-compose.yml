@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:15 # O postgis/postgis si necesitas funciones geográficas
+    environment:
+      POSTGRES_DB: ar_database
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - default
+
+  backend:
+    build: ./backend
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgres://user:password@db:5432/ar_database
+    depends_on:
+      - db
+    networks:
+      - default
+      - net-proxy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8085:80"
+    depends_on:
+      - backend
+    networks:
+      - default
+      - net-proxy
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+  net-proxy:
+    external: true
