@@ -15,7 +15,7 @@ services:
     volumes:
       - ./backend:/app
     environment:
-      - DATABASE_URL=postgres://user:password@db:5432/ar_database
+      - DATABASE_URL=postgresql://user:password@db:5432/ar_database
     depends_on:
       - db
     networks:
