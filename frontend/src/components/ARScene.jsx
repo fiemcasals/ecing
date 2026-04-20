@@ -200,8 +200,13 @@ export default function ARScene() {
                 cursor="raycaster: objects: [clickhandler]"
                 raycaster="objects: [clickhandler]"
             >
-                {/* Utilizamos la cámara de AR.js para que use GPS y brújula de fondo */}
-                <a-camera ref={cameraRef} gps-new-camera="gpsMinDistance: 1; positionMinAccuracy: 100">
+                {/* 
+                    Al usar nuestro sistema de posicionamiento Haversine, el usuario
+                    siempre será el centro del universo 3D (0, 0, 0). 
+                    Por lo tanto, quitamos gps-new-camera para evitar que AR.js teletransporte 
+                    la cámara a coordenadas de escala global.
+                */}
+                <a-camera id="main-camera" look-controls="touchEnabled: false" camera="far: 150000;">
                     <a-cursor
                       color={isCalibrated ? "#FFFFFF" : "#4ECDC4"}
                       fuse="false"
@@ -216,13 +221,21 @@ export default function ARScene() {
                 <a-entity rotation={`0 ${worldRotation} 0`}>
                     {pois.map(poi => {
                         let positionStr = "0 0 0";
+                        let entityScale = 2; // Escala por defecto
+                        
                         // Usamos posicionamiento matemático relativo siempre que tengamos userLoc
                         if (userLoc) {
                             const { distance, bearing } = calculateDistanceAndBearing(userLoc.lat, userLoc.lon, poi.lat, poi.lon);
                             const bearingRad = bearing * Math.PI / 180;
+                            
+                            // Posición en metros. A-Frame 1 unidad = 1 metro.
                             const x = distance * Math.sin(bearingRad);
                             const z = -distance * Math.cos(bearingRad);
                             positionStr = `${x} 0 ${z}`;
+                            
+                            // Escalar dinámicamente: a mayor distancia, más grande el modelo para que no desaparezca
+                            // Factor empírico: 1 metro de escala por cada 15 metros de distancia real (mínimo 2).
+                            entityScale = Math.max(2, distance / 15);
                         }
 
                         // Ignoramos gps-new-entity-place activamente para tomar control total de X,Z espaciales.
@@ -230,8 +243,8 @@ export default function ARScene() {
                             <a-entity
                                 key={poi.id}
                                 position={positionStr}
-                                look-at="[gps-new-camera]"
-                                scale="2 2 2"
+                                look-at="#main-camera"
+                                scale={`${entityScale} ${entityScale} ${entityScale}`}
                             >
                                 <a-box 
                                     class="clickable"
