@@ -70,6 +70,21 @@ export default function UploadForm() {
 
                 <button type="submit" className="primary">Guardar Punto</button>
                 {status && <p style={{marginTop: '1rem', color: status.includes('Error') ? '#ff4444' : '#4ECDC4', fontWeight: 'bold'}}>{status}</p>}
+                
+                <hr style={{margin: '2rem 0', borderColor: '#4ECDC4', opacity: 0.2}} />
+                
+                <button type="button" onClick={async () => {
+                    if (window.confirm("¿ESTAS SEGURO? Se borrarán todos los POIs de la base de datos.")) {
+                        try {
+                            const res = await axios.delete('/api/pois/all');
+                            setStatus(res.data.message);
+                        } catch (err) {
+                            setStatus("Error al limpiar DB: " + err.message);
+                        }
+                    }
+                }} style={{background: '#ff4444', color: 'white', border: 'none', padding: '1rem', borderRadius: '4px', cursor: 'pointer', width: '100%', fontWeight: 'bold'}}>
+                    ⚠️ LIMPIAR TODA LA BASE DE DATOS
+                </button>
             </form>
         </div>
     );

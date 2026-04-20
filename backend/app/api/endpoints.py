@@ -65,3 +65,9 @@ def get_nearby_pois(lat: float, lon: float, max_distance: float = 0.5, db: Sessi
     all_pois = db.query(models.POI).all()
     nearby = get_nearby_objects(lat, lon, all_pois, max_distance)
     return nearby
+
+@router.delete("/pois/all")
+def delete_all_pois(db: Session = Depends(get_db)):
+    deleted_count = db.query(models.POI).delete()
+    db.commit()
+    return {"message": f"Successfully deleted {deleted_count} POIs"}
