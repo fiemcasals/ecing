@@ -72,16 +72,21 @@ export default function ARScene() {
         };
 
         if ("geolocation" in navigator) {
-            // Vigilar posición constante (Requerimiento del usuario estar activo en background siempre)
+            // Vigilar posición constante
             watchId = navigator.geolocation.watchPosition(
                 (pos) => {
                     const { latitude, longitude } = pos.coords;
                     if (isMounted) {
-                        // Solo solicitamos al backend en el primer parpadeo o si cambian significativamente
-                        if (!userLoc) {
-                            fetchPOIs(latitude, longitude);
-                        }
-                        setUserLoc({ lat: latitude, lon: longitude });
+                        setUserLoc(currentLoc => {
+                            // Solo hacer fetch si no hay locación previa o si se movió mucho (muy rústico pero evita spam)
+                            if (!currentLoc) {
+                                fetchPOIs(latitude, longitude);
+                            } else {
+                                // Para debug: podemos no fetchear por cada pasito
+                                // fetchPOIs(latitude, longitude); 
+                            }
+                            return { lat: latitude, lon: longitude };
+                        });
                     }
                 },
                 (err) => { 
@@ -112,7 +117,9 @@ export default function ARScene() {
     }, [pois]);
 
     const handleCalibrate = () => {
-        if (!selectedCalibPoiId || !userLoc || !cameraRef.current) return;
+        if (!selectedCalibPoiId) { addLog('Err: Sin ID seleccionado'); return; }
+        if (!userLoc) { addLog('Err: Sin UserLoc'); return; }
+        if (!cameraRef.current) { addLog('Err: Sin CameraRef'); return; }
         
         const refPoi = pois.find(p => p.id === parseInt(selectedCalibPoiId));
         if (!refPoi) return;
@@ -122,10 +129,12 @@ export default function ARScene() {
         let camYaw = 0;
         
         try {
-            // Object3D internal rotation or attribute
-            const rotation = cameraEl.getAttribute('rotation');
-            if (rotation) {
-                camYaw = rotation.y; 
+            // El componente look-controls actualiza object3D.rotation.y
+            if (cameraEl.object3D) {
+                // A-Frame rotation es en radianes en object3D, pero .getAttribute('rotation') es grados.
+                // Usemos getAttribute para que sea exacto con A-Frame standard (grados)
+                const rot = cameraEl.getAttribute('rotation');
+                if (rot) camYaw = rot.y;
             }
         } catch (e) {
             addLog("Err leyendo rot Y.");
@@ -139,13 +148,12 @@ export default function ARScene() {
 
         // 3. Compensación de la brújula (Rotar todo el contenedor de POIs)
         // La rotación en A-Frame (Y) es antihoraria. Bearing Geográfico (Brujula) es horario.
-        // Formula para alinear Bearing(Mundo físico) al Angle(A-Frame visual): worldRotation = bearing + camYaw
         const currentWorldOffset = (bearing + camYaw) % 360;
         
         setWorldRotation(currentWorldOffset);
         setIsCalibrated(true);
         setStatus(`✅ Calibrado. Offset: ${currentWorldOffset.toFixed(1)}°`);
-        addLog(`Aplicando offset rot: ${currentWorldOffset.toFixed(1)}°`);
+        addLog(`OFFSET FIJADO: ${currentWorldOffset.toFixed(1)}°`);
     };
 
     const API_URL = "";
@@ -237,13 +245,7 @@ export default function ARScene() {
                 cursor="raycaster: objects: [clickhandler]"
                 raycaster="objects: [clickhandler]"
             >
-                {/* 
-                    Al usar nuestro sistema de posicionamiento Haversine, el usuario
-                    siempre será el centro del universo 3D (0, 0, 0). 
-                    Por lo tanto, quitamos gps-new-camera para evitar que AR.js teletransporte 
-                    la cámara a coordenadas de escala global.
-                */}
-                <a-camera id="main-camera" look-controls="touchEnabled: false" camera="far: 150000;">
+                <a-camera ref={cameraRef} id="main-camera" look-controls="touchEnabled: false" camera="far: 150000; fov: 80;">
                     <a-cursor
                       color={isCalibrated ? "#FFFFFF" : "#4ECDC4"}
                       fuse="false"
@@ -257,7 +259,7 @@ export default function ARScene() {
                 {/* Contenedor principal de Puntos. Su rotación anclada se actualiza en la calibración */}
                 <a-entity rotation={`0 ${worldRotation} 0`}>
                     {pois.map(poi => {
-                        let positionStr = "0 0 0";
+                        let positionStr = "0 1.6 0";
                         let entityScale = 2; // Escala por defecto
                         
                         // Usamos posicionamiento matemático relativo siempre que tengamos userLoc
@@ -266,12 +268,12 @@ export default function ARScene() {
                             const bearingRad = bearing * Math.PI / 180;
                             
                             // Posición en metros. A-Frame 1 unidad = 1 metro.
+                            // Y = 1.6 para que este a la altura de los ojos en vez de en el piso.
                             const x = distance * Math.sin(bearingRad);
                             const z = -distance * Math.cos(bearingRad);
-                            positionStr = `${x} 0 ${z}`;
+                            positionStr = `${x} 1.6 ${z}`;
                             
                             // Escalar dinámicamente: a mayor distancia, más grande el modelo para que no desaparezca
-                            // Factor empírico: 1 metro de escala por cada 15 metros de distancia real (mínimo 2).
                             entityScale = Math.max(2, distance / 15);
                         }
 
