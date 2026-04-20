@@ -235,9 +235,9 @@ export default function ARScene() {
                          return (
                              <div>
                                 P0: {fp.name}<br/>
-                                D: {distance.toFixed(1)}m<br/>
-                                B: {bearing.toFixed(1)}°<br/>
-                                X:{ (distance * Math.sin(bearing * Math.PI/180)).toFixed(1) } Z:{( -distance * Math.cos(bearing * Math.PI/180)).toFixed(1) }
+                                D: {distance.toFixed(3)}m<br/>
+                                B: {bearing.toFixed(3)}°<br/>
+                                X:{ (distance * Math.sin(bearing * Math.PI/180)).toFixed(3) } Z:{( -distance * Math.cos(bearing * Math.PI/180)).toFixed(3) }
                              </div>
                          );
                     })()}
@@ -265,6 +265,22 @@ export default function ARScene() {
                 
                 {/* Contenedor principal de Puntos. Su rotación anclada se actualiza en la calibración */}
                 <a-entity rotation={`0 ${worldRotation} 0`}>
+                    
+                    {/* Visual Grid de Suelo para Depuración. Una grilla de 100x100 metros con celdas de 1x1 metro a ras del piso. */}
+                    {isCalibrated && (
+                        <a-plane 
+                            position="0 0 0" 
+                            rotation="-90 0 0" 
+                            width="100" 
+                            height="100" 
+                            color="#4ECDC4" 
+                            wireframe="true" 
+                            segments-width="100" 
+                            segments-height="100" 
+                            material="opacity: 0.3; wireframeLinewidth: 2;">
+                        </a-plane>
+                    )}
+
                     {isCalibrated && pois.map(poi => {
                         let positionStr = "0 1.6 0";
                         let entityScale = 2; 
