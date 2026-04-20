@@ -162,8 +162,8 @@ export default function ARScene() {
 
     const API_URL = "";
 
-    // Determinamos qué ubicación usar para todos los cálculos. Si nos calibramos, ignoramos el GPS en vivo y nos quedamos fijos.
-    const activeLoc = lockedLoc || userLoc;
+    // Determinamos qué ubicación usar para todos los cálculos. Ya no usamos lockedLoc a pedido del usuario.
+    const activeLoc = userLoc;
 
     return (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', overflow: 'hidden' }}>
@@ -180,7 +180,7 @@ export default function ARScene() {
                 {!isCalibrated && pois.length > 0 && (
                     <div style={{ position: 'absolute', top: '5rem', right: '1rem', background: 'rgba(0,0,0,0.8)', padding: '1rem', borderRadius: '8px', color: 'white', maxWidth: '250px', pointerEvents: 'auto', border: '1px solid #4ECDC4' }}>
                         <h4 style={{ margin: '0 0 10px 0', color: '#4ECDC4' }}>Fijar Referencia</h4>
-                        <p style={{ fontSize: '0.8rem', margin: '0 0 10px 0' }}>Para corregir la ubicación, mira un punto físico con el círculo central y fíjalo.</p>
+                        <p style={{ fontSize: '0.8rem', margin: '0 0 10px 0' }}>Para alinear brújula, mira un punto físico conocido y fíjalo.</p>
                         <select 
                             value={selectedCalibPoiId} 
                             onChange={e => setSelectedCalibPoiId(e.target.value)}
@@ -205,7 +205,7 @@ export default function ARScene() {
                             onClick={handleRecalibrate}
                             style={{ padding: '8px 12px', background: 'rgba(255,107,107,0.8)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold' }}
                         >
-                            🔄 Recalibrar
+                            🔄 Recalibrar Brújula
                         </button>
                     </div>
                 )}
@@ -226,7 +226,7 @@ export default function ARScene() {
                 
                 {/* Panel de Debug Móvil */}
                 <div style={{ position: 'absolute', bottom: '1rem', right: '1rem', background: 'rgba(0,0,0,0.85)', padding: '0.8rem', borderRadius: '8px', color: '#0f0', fontSize: '0.7rem', pointerEvents: 'none', zIndex: 9998, maxWidth: '180px', fontFamily: 'monospace' }}>
-                    <strong style={{color: '#fff'}}>DEBUG CONSOLE {lockedLoc && "(LOC. BLOCK)"}</strong><br/>
+                    <strong style={{color: '#fff'}}>DEBUG CONSOLE (GPS VIVO)</strong><br/>
                     {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
                     <hr style={{borderColor: '#0f0'}}/>
                     {activeLoc && pois.length > 0 && (() => {
