@@ -4,10 +4,14 @@ import axios from 'axios';
 // Función para calcular distancia y rumble (Geográfico) entre 2 coordenadas (Haversine)
 function calculateDistanceAndBearing(lat1, lon1, lat2, lon2) {
     const R = 6371e3; // Radio de la tierra en metros
-    const φ1 = lat1 * Math.PI/180;
-    const φ2 = lat2 * Math.PI/180;
-    const Δφ = (lat2-lat1) * Math.PI/180;
-    const Δλ = (lon2-lon1) * Math.PI/180;
+    // Castear a floats para evitar que JSON strings rompan la math con NaN
+    const fLat1 = parseFloat(lat1), fLon1 = parseFloat(lon1);
+    const fLat2 = parseFloat(lat2), fLon2 = parseFloat(lon2);
+
+    const φ1 = fLat1 * Math.PI/180;
+    const φ2 = fLat2 * Math.PI/180;
+    const Δφ = (fLat2-fLat1) * Math.PI/180;
+    const Δλ = (fLon2-fLon1) * Math.PI/180;
 
     const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
             Math.cos(φ1) * Math.cos(φ2) *
@@ -28,6 +32,10 @@ export default function ARScene() {
     const [status, setStatus] = useState("Obteniendo GPS para buscar puntos cercanos...");
     const [activePoi, setActivePoi] = useState(null);
     
+    // Debug panel
+    const [debugLogs, setDebugLogs] = useState(["Iniciando AR..."]);
+    const addLog = (msg) => setDebugLogs(prev => [...prev, msg].slice(-5));
+    
     // GPS Tracker constante
     const [userLoc, setUserLoc] = useState(null);
 
@@ -45,6 +53,7 @@ export default function ARScene() {
         const fetchPOIs = async (lat, lon) => {
             try {
                 const API_URL = "";
+                addLog(`Buscando POIs coords: ${lat.toFixed(3)}, ${lon.toFixed(3)}`);
                 const response = await axios.get(`${API_URL}/api/pois/nearby`, {
                     params: { lat, lon, max_distance: 2.0 }
                 });
@@ -58,6 +67,7 @@ export default function ARScene() {
                 }
             } catch (err) {
                 if (isMounted) setStatus("Error al cargar puntos: " + err.message);
+                addLog(`Error FETCH: ${err.message}`);
             }
         };
 
@@ -74,11 +84,15 @@ export default function ARScene() {
                         setUserLoc({ lat: latitude, lon: longitude });
                     }
                 },
-                (err) => { if (isMounted) setStatus("Error GPS: " + err.message); },
+                (err) => { 
+                    if (isMounted) setStatus("Error GPS: " + err.message); 
+                    addLog(`Error GPS: ${err.message}`);
+                },
                 { enableHighAccuracy: true, maximumAge: 0, timeout: 27000 }
             );
         } else {
             setStatus("GPS no soportado");
+            addLog("Sin soporte GPS.");
         }
 
         return () => { 
@@ -114,11 +128,14 @@ export default function ARScene() {
                 camYaw = rotation.y; 
             }
         } catch (e) {
-            console.error("No se pudo leer la rotacion", e);
+            addLog("Err leyendo rot Y.");
         }
 
         // 2. Calcular bearing geográfico del usuario hacia el POI
-        const { bearing } = calculateDistanceAndBearing(userLoc.lat, userLoc.lon, refPoi.lat, refPoi.lon);
+        const { distance, bearing } = calculateDistanceAndBearing(userLoc.lat, userLoc.lon, refPoi.lat, refPoi.lon);
+
+        addLog(`Calib: ${refPoi.name}`);
+        addLog(`Yaw:${camYaw.toFixed(1)}, Brng:${bearing.toFixed(1)}`);
 
         // 3. Compensación de la brújula (Rotar todo el contenedor de POIs)
         // La rotación en A-Frame (Y) es antihoraria. Bearing Geográfico (Brujula) es horario.
@@ -127,7 +144,8 @@ export default function ARScene() {
         
         setWorldRotation(currentWorldOffset);
         setIsCalibrated(true);
-        setStatus("✅ Vista Calibrada. Los puntos ahora están anclados a la referencia.");
+        setStatus(`✅ Calibrado. Offset: ${currentWorldOffset.toFixed(1)}°`);
+        addLog(`Aplicando offset rot: ${currentWorldOffset.toFixed(1)}°`);
     };
 
     const API_URL = "";
@@ -190,6 +208,25 @@ export default function ARScene() {
                         <button onClick={() => setActivePoi(null)} style={{background: 'rgba(255,255,255,0.1)', border:'1px solid white', color: 'white', padding: '0.7rem', marginTop: '1rem', borderRadius: '6px', width: '100%', cursor:'pointer', fontWeight:'bold'}}>Cerrar</button>
                     </div>
                 )}
+                
+                {/* Panel de Debug Móvil */}
+                <div style={{ position: 'absolute', bottom: '1rem', right: '1rem', background: 'rgba(0,0,0,0.85)', padding: '0.8rem', borderRadius: '8px', color: '#0f0', fontSize: '0.7rem', pointerEvents: 'none', zIndex: 9998, maxWidth: '180px', fontFamily: 'monospace' }}>
+                    <strong style={{color: '#fff'}}>DEBUG CONSOLE</strong><br/>
+                    {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
+                    <hr style={{borderColor: '#0f0'}}/>
+                    {userLoc && pois.length > 0 && (() => {
+                         const fp = pois[0];
+                         const { distance, bearing } = calculateDistanceAndBearing(userLoc.lat, userLoc.lon, fp.lat, fp.lon);
+                         return (
+                             <div>
+                                P0: {fp.name}<br/>
+                                D: {distance.toFixed(1)}m<br/>
+                                B: {bearing.toFixed(1)}°<br/>
+                                X:{ (distance * Math.sin(bearing * Math.PI/180)).toFixed(1) } Z:{( -distance * Math.cos(bearing * Math.PI/180)).toFixed(1) }
+                             </div>
+                         );
+                    })()}
+                </div>
             </div>
 
             {/* A-Frame Scene */}
