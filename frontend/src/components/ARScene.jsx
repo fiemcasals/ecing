@@ -1,13 +1,46 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
+
+// Función para calcular distancia y rumble (Geográfico) entre 2 coordenadas (Haversine)
+function calculateDistanceAndBearing(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // Radio de la tierra en metros
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c; // en metros
+
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1)*Math.sin(φ2) -
+              Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+    let brng = Math.atan2(y, x);
+    brng = (brng * 180 / Math.PI + 360) % 360; // en grados (0=N, 90=E, 180=S, 270=W)
+    return { distance, bearing: brng };
+}
 
 export default function ARScene() {
     const [pois, setPois] = useState([]);
     const [status, setStatus] = useState("Obteniendo GPS para buscar puntos cercanos...");
     const [activePoi, setActivePoi] = useState(null);
+    
+    // GPS Tracker constante
+    const [userLoc, setUserLoc] = useState(null);
+
+    // Estados de Calibración
+    const [selectedCalibPoiId, setSelectedCalibPoiId] = useState("");
+    const [isCalibrated, setIsCalibrated] = useState(false);
+    const [worldRotation, setWorldRotation] = useState(0);
+
+    const cameraRef = useRef(null);
 
     useEffect(() => {
         let isMounted = true;
+        let watchId;
         
         const fetchPOIs = async (lat, lon) => {
             try {
@@ -17,9 +50,11 @@ export default function ARScene() {
                 });
                 if (isMounted) {
                     setPois(response.data);
-                    setStatus(response.data.length > 0 
-                        ? `Se encontraron ${response.data.length} puntos cercanos.` 
-                        : "No hay puntos cercanos registrados.");
+                    if (!status.includes("Calibrada")) {
+                        setStatus(response.data.length > 0 
+                            ? `Se encontraron ${response.data.length} puntos cercanos.` 
+                            : "No hay puntos cercanos registrados.");
+                    }
                 }
             } catch (err) {
                 if (isMounted) setStatus("Error al cargar puntos: " + err.message);
@@ -27,16 +62,29 @@ export default function ARScene() {
         };
 
         if ("geolocation" in navigator) {
-            navigator.geolocation.getCurrentPosition(
-                (pos) => fetchPOIs(pos.coords.latitude, pos.coords.longitude),
-                (err) => { if (isMounted) setStatus("Error GPS: " + err.message + ". Activa permisos."); },
-                { enableHighAccuracy: true }
+            // Vigilar posición constante (Requerimiento del usuario estar activo en background siempre)
+            watchId = navigator.geolocation.watchPosition(
+                (pos) => {
+                    const { latitude, longitude } = pos.coords;
+                    if (isMounted) {
+                        // Solo solicitamos al backend en el primer parpadeo o si cambian significativamente
+                        if (!userLoc) {
+                            fetchPOIs(latitude, longitude);
+                        }
+                        setUserLoc({ lat: latitude, lon: longitude });
+                    }
+                },
+                (err) => { if (isMounted) setStatus("Error GPS: " + err.message); },
+                { enableHighAccuracy: true, maximumAge: 0, timeout: 27000 }
             );
         } else {
             setStatus("GPS no soportado");
         }
 
-        return () => { isMounted = false; };
+        return () => { 
+            isMounted = false; 
+            if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
+        };
     }, []);
 
     useEffect(() => {
@@ -48,14 +96,87 @@ export default function ARScene() {
         window.addEventListener('poi-clicked', handlePoiClick);
         return () => window.removeEventListener('poi-clicked', handlePoiClick);
     }, [pois]);
+
+    const handleCalibrate = () => {
+        if (!selectedCalibPoiId || !userLoc || !cameraRef.current) return;
+        
+        const refPoi = pois.find(p => p.id === parseInt(selectedCalibPoiId));
+        if (!refPoi) return;
+
+        // 1. Obtener ángulo hacia donde mira la cámara en este instante.
+        const cameraEl = cameraRef.current;
+        let camYaw = 0;
+        
+        try {
+            // Object3D internal rotation or attribute
+            const rotation = cameraEl.getAttribute('rotation');
+            if (rotation) {
+                camYaw = rotation.y; 
+            }
+        } catch (e) {
+            console.error("No se pudo leer la rotacion", e);
+        }
+
+        // 2. Calcular bearing geográfico del usuario hacia el POI
+        const { bearing } = calculateDistanceAndBearing(userLoc.lat, userLoc.lon, refPoi.lat, refPoi.lon);
+
+        // 3. Compensación de la brújula (Rotar todo el contenedor de POIs)
+        // La rotación en A-Frame (Y) es antihoraria. Bearing Geográfico (Brujula) es horario.
+        // Formula para alinear Bearing(Mundo físico) al Angle(A-Frame visual): worldRotation = bearing + camYaw
+        const currentWorldOffset = (bearing + camYaw) % 360;
+        
+        setWorldRotation(currentWorldOffset);
+        setIsCalibrated(true);
+        setStatus("✅ Vista Calibrada. Los puntos ahora están anclados a la referencia.");
+    };
+
     const API_URL = "";
 
     return (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', overflow: 'hidden' }}>
-            <div className="ar-overlay">
-                <div style={{ background: 'rgba(0,0,0,0.5)', padding: '0.8rem', borderRadius: '8px', color: 'white', display: 'inline-block', backdropFilter: 'blur(5px)' }}>
-                    {status}
+            <div className="ar-overlay" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 99999, pointerEvents: 'none' }}>
+                
+                {/* Status banner */}
+                <div style={{ marginTop: 'env(safe-area-inset-top, 20px)', width: '100%', textAlign: 'center' }}>
+                    <div style={{ background: 'rgba(0,0,0,0.7)', padding: '0.8rem 1.2rem', borderRadius: '20px', color: 'white', display: 'inline-block', backdropFilter: 'blur(5px)', fontSize: '0.9rem', pointerEvents: 'auto' }}>
+                        {status}
+                    </div>
                 </div>
+                
+                {/* Cuadro de Calibración */}
+                {!isCalibrated && pois.length > 0 && (
+                    <div style={{ position: 'absolute', top: '5rem', right: '1rem', background: 'rgba(0,0,0,0.8)', padding: '1rem', borderRadius: '8px', color: 'white', maxWidth: '250px', pointerEvents: 'auto', border: '1px solid #4ECDC4' }}>
+                        <h4 style={{ margin: '0 0 10px 0', color: '#4ECDC4' }}>Fijar Referencia</h4>
+                        <p style={{ fontSize: '0.8rem', margin: '0 0 10px 0' }}>Para corregir la ubicación, mira un punto físico con el círculo central y fíjalo.</p>
+                        <select 
+                            value={selectedCalibPoiId} 
+                            onChange={e => setSelectedCalibPoiId(e.target.value)}
+                            style={{ width: '100%', padding: '8px', marginBottom: '10px', background: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px' }}
+                        >
+                            <option value="">-- Seleccionar punto --</option>
+                            {pois.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                        <button 
+                            onClick={handleCalibrate}
+                            disabled={!selectedCalibPoiId}
+                            style={{ width: '100%', padding: '10px', background: selectedCalibPoiId ? '#4ECDC4' : '#555', color: '#111', fontWeight: 'bold', border: 'none', borderRadius: '4px', cursor: selectedCalibPoiId ? 'pointer' : 'not-allowed' }}
+                        >
+                            Fijar Referencia
+                        </button>
+                    </div>
+                )}
+                
+                {isCalibrated && (
+                     <div style={{ position: 'absolute', top: '5rem', right: '1rem', pointerEvents: 'auto' }}>
+                        <button 
+                            onClick={() => setIsCalibrated(false)}
+                            style={{ padding: '8px 12px', background: 'rgba(255,107,107,0.8)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold' }}
+                        >
+                            🔄 Recalibrar
+                        </button>
+                    </div>
+                )}
+
                 {activePoi && (
                     <div style={{ position: 'absolute', bottom: '2rem', left: '1rem', right: '1rem', zIndex: 1001, maxHeight: '80vh', overflowY: 'auto' }} className="ar-info">
                         <h3>{activePoi.name}</h3>
@@ -79,60 +200,61 @@ export default function ARScene() {
                 cursor="raycaster: objects: [clickhandler]"
                 raycaster="objects: [clickhandler]"
             >
-                <a-camera gps-new-camera="gpsMinDistance: 1; positionMinAccuracy: 100">
-                    {/* Retícula visual en pantalla para clickear */}
+                {/* Utilizamos la cámara de AR.js para que use GPS y brújula de fondo */}
+                <a-camera ref={cameraRef} gps-new-camera="gpsMinDistance: 1; positionMinAccuracy: 100">
                     <a-cursor
-                      color="#4ECDC4"
+                      color={isCalibrated ? "#FFFFFF" : "#4ECDC4"}
                       fuse="false"
                       raycaster="objects: [clickhandler]"
                       position="0 0 -1"
                       geometry="primitive: ring; radiusInner: 0.02; radiusOuter: 0.03"
-                      material="color: #4ECDC4; shader: flat; opacity: 0.7">
+                      material={`color: ${isCalibrated ? '#FFFFFF' : '#4ECDC4'}; shader: flat; opacity: 0.7`}>
                     </a-cursor>
                 </a-camera>
                 
-                {pois.map(poi => (
-                    <a-entity
-                        key={poi.id}
-                        gps-new-entity-place={`latitude: ${poi.lat}; longitude: ${poi.lon};`}
-                        look-at="[gps-new-camera]"
-                        scale="2 2 2"
-                    >
-                        {/* HITBOX INVISIBLE para el raycaster (necesita geometría para poder tocarse) */}
-                        <a-box 
-                            class="clickable"
-                            data-id={poi.id}
-                            clickhandler=""
-                            position="0 0.5 0" 
-                            width="3" 
-                            height="3" 
-                            depth="0.5" 
-                            material="opacity: 0.0; transparent: true">
-                        </a-box>
-                        {/* Poste */}
-                        <a-cylinder color="#CCCCCC" height="2" radius="0.05" position="0 -1 0"></a-cylinder>
-                        {/* Bandera */}
-                        <a-plane color="#FF6B6B" height="1" width="1.5" position="0.75 0 0" material="side: double"></a-plane>
-                        
-                        {/* El cartel arriba de la bandera */}
-                        <a-plane color="#1a1a2e" height="0.8" width="2.5" position="0 1.5 0" material="opacity: 0.9; side: double">
-                             <a-text 
-                                value={poi.name} 
-                                align="center" 
-                                color="#4ECDC4" 
-                                scale="0.8 0.8 0.8" 
-                                position="0 0.1 0.01">
-                             </a-text>
-                             <a-text 
-                                value="Mirame y tocame para ver info" 
-                                align="center" 
-                                color="white" 
-                                scale="0.3 0.3 0.3" 
-                                position="0 -0.25 0.01">
-                             </a-text>
-                        </a-plane>
-                    </a-entity>
-                ))}
+                {/* Contenedor principal de Puntos. Su rotación anclada se actualiza en la calibración */}
+                <a-entity rotation={`0 ${worldRotation} 0`}>
+                    {pois.map(poi => {
+                        let positionStr = "0 0 0";
+                        // Usamos posicionamiento matemático relativo siempre que tengamos userLoc
+                        if (userLoc) {
+                            const { distance, bearing } = calculateDistanceAndBearing(userLoc.lat, userLoc.lon, poi.lat, poi.lon);
+                            const bearingRad = bearing * Math.PI / 180;
+                            const x = distance * Math.sin(bearingRad);
+                            const z = -distance * Math.cos(bearingRad);
+                            positionStr = `${x} 0 ${z}`;
+                        }
+
+                        // Ignoramos gps-new-entity-place activamente para tomar control total de X,Z espaciales.
+                        return (
+                            <a-entity
+                                key={poi.id}
+                                position={positionStr}
+                                look-at="[gps-new-camera]"
+                                scale="2 2 2"
+                            >
+                                <a-box 
+                                    class="clickable"
+                                    data-id={poi.id}
+                                    clickhandler=""
+                                    position="0 0.5 0" 
+                                    width="3" 
+                                    height="3" 
+                                    depth="0.5" 
+                                    material="opacity: 0.0; transparent: true">
+                                </a-box>
+                                
+                                <a-cylinder color={poi.id === parseInt(selectedCalibPoiId) && isCalibrated ? "#FFFFFF" : "#CCCCCC"} height="2" radius="0.05" position="0 -1 0"></a-cylinder>
+                                <a-plane color={poi.id === parseInt(selectedCalibPoiId) && isCalibrated ? "#4ECDC4" : "#FF6B6B"} height="1" width="1.5" position="0.75 0 0" material="side: double"></a-plane>
+                                
+                                <a-plane color="#1a1a2e" height="0.8" width="2.5" position="0 1.5 0" material="opacity: 0.9; side: double">
+                                     <a-text value={poi.name} align="center" color={poi.id === parseInt(selectedCalibPoiId) && isCalibrated ? "#4ECDC4" : "white"} scale="0.8 0.8 0.8" position="0 0.1 0.01"></a-text>
+                                     <a-text value={isCalibrated && poi.id === parseInt(selectedCalibPoiId) ? "PUNTO DE REFERENCIA" : "Mirame y tocame para info"} align="center" color={poi.id === parseInt(selectedCalibPoiId) && isCalibrated ? "#4ECDC4" : "white"} scale="0.3 0.3 0.3" position="0 -0.25 0.01"></a-text>
+                                </a-plane>
+                            </a-entity>
+                        );
+                    })}
+                </a-entity>
             </a-scene>
         </div>
     );
