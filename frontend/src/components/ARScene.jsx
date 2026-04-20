@@ -38,6 +38,7 @@ export default function ARScene() {
     
     // GPS Tracker constante
     const [userLoc, setUserLoc] = useState(null);
+    const [lockedLoc, setLockedLoc] = useState(null); // Para congelar la posición post-calibración y evitar jitter
 
     // Estados de Calibración
     const [selectedCalibPoiId, setSelectedCalibPoiId] = useState("");
@@ -78,12 +79,8 @@ export default function ARScene() {
                     const { latitude, longitude } = pos.coords;
                     if (isMounted) {
                         setUserLoc(currentLoc => {
-                            // Solo hacer fetch si no hay locación previa o si se movió mucho (muy rústico pero evita spam)
                             if (!currentLoc) {
                                 fetchPOIs(latitude, longitude);
-                            } else {
-                                // Para debug: podemos no fetchear por cada pasito
-                                // fetchPOIs(latitude, longitude); 
                             }
                             return { lat: latitude, lon: longitude };
                         });
@@ -129,15 +126,14 @@ export default function ARScene() {
         let camYaw = 0;
         
         try {
-            // El componente look-controls actualiza object3D.rotation.y
             if (cameraEl.object3D) {
-                // A-Frame rotation es en radianes en object3D, pero .getAttribute('rotation') es grados.
-                // Usemos getAttribute para que sea exacto con A-Frame standard (grados)
-                const rot = cameraEl.getAttribute('rotation');
-                if (rot) camYaw = rot.y;
+                // A-Frame (Vanilla) actualiza object3D.rotation en radianes constantemente.
+                // Usar getAttribute es un error porque no se refresca visualmente durante la ejecución para ganar rendimiento.
+                const radY = cameraEl.object3D.rotation.y;
+                camYaw = radY * (180 / Math.PI); // Convertir rads a grados
             }
         } catch (e) {
-            addLog("Err leyendo rot Y.");
+            addLog("Err leyendo rot Y nativa.");
         }
 
         // 2. Calcular bearing geográfico del usuario hacia el POI
@@ -147,16 +143,27 @@ export default function ARScene() {
         addLog(`Yaw:${camYaw.toFixed(1)}, Brng:${bearing.toFixed(1)}`);
 
         // 3. Compensación de la brújula (Rotar todo el contenedor de POIs)
-        // La rotación en A-Frame (Y) es antihoraria. Bearing Geográfico (Brujula) es horario.
         const currentWorldOffset = (bearing + camYaw) % 360;
         
         setWorldRotation(currentWorldOffset);
+        // CONGELAR la posición GPS
+        setLockedLoc(userLoc);
+        
         setIsCalibrated(true);
-        setStatus(`✅ Calibrado. Offset: ${currentWorldOffset.toFixed(1)}°`);
-        addLog(`OFFSET FIJADO: ${currentWorldOffset.toFixed(1)}°`);
+        setStatus(`✅ Calibrado. Offset: ${Math.round(currentWorldOffset)}°`);
+        addLog(`OFFSET FIJADO: ${Math.round(currentWorldOffset)}°`);
+    };
+
+    const handleRecalibrate = () => {
+        setIsCalibrated(false);
+        setLockedLoc(null);
+        setStatus("Modo brújula libre repuesto.");
     };
 
     const API_URL = "";
+
+    // Determinamos qué ubicación usar para todos los cálculos. Si nos calibramos, ignoramos el GPS en vivo y nos quedamos fijos.
+    const activeLoc = lockedLoc || userLoc;
 
     return (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', overflow: 'hidden' }}>
@@ -195,7 +202,7 @@ export default function ARScene() {
                 {isCalibrated && (
                      <div style={{ position: 'absolute', top: '5rem', right: '1rem', pointerEvents: 'auto' }}>
                         <button 
-                            onClick={() => setIsCalibrated(false)}
+                            onClick={handleRecalibrate}
                             style={{ padding: '8px 12px', background: 'rgba(255,107,107,0.8)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold' }}
                         >
                             🔄 Recalibrar
@@ -219,12 +226,12 @@ export default function ARScene() {
                 
                 {/* Panel de Debug Móvil */}
                 <div style={{ position: 'absolute', bottom: '1rem', right: '1rem', background: 'rgba(0,0,0,0.85)', padding: '0.8rem', borderRadius: '8px', color: '#0f0', fontSize: '0.7rem', pointerEvents: 'none', zIndex: 9998, maxWidth: '180px', fontFamily: 'monospace' }}>
-                    <strong style={{color: '#fff'}}>DEBUG CONSOLE</strong><br/>
+                    <strong style={{color: '#fff'}}>DEBUG CONSOLE {lockedLoc && "(LOC. BLOCK)"}</strong><br/>
                     {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
                     <hr style={{borderColor: '#0f0'}}/>
-                    {userLoc && pois.length > 0 && (() => {
+                    {activeLoc && pois.length > 0 && (() => {
                          const fp = pois[0];
-                         const { distance, bearing } = calculateDistanceAndBearing(userLoc.lat, userLoc.lon, fp.lat, fp.lon);
+                         const { distance, bearing } = calculateDistanceAndBearing(activeLoc.lat, activeLoc.lon, fp.lat, fp.lon);
                          return (
                              <div>
                                 P0: {fp.name}<br/>
@@ -260,24 +267,19 @@ export default function ARScene() {
                 <a-entity rotation={`0 ${worldRotation} 0`}>
                     {pois.map(poi => {
                         let positionStr = "0 1.6 0";
-                        let entityScale = 2; // Escala por defecto
+                        let entityScale = 2; 
                         
-                        // Usamos posicionamiento matemático relativo siempre que tengamos userLoc
-                        if (userLoc) {
-                            const { distance, bearing } = calculateDistanceAndBearing(userLoc.lat, userLoc.lon, poi.lat, poi.lon);
+                        if (activeLoc) {
+                            const { distance, bearing } = calculateDistanceAndBearing(activeLoc.lat, activeLoc.lon, poi.lat, poi.lon);
                             const bearingRad = bearing * Math.PI / 180;
                             
-                            // Posición en metros. A-Frame 1 unidad = 1 metro.
-                            // Y = 1.6 para que este a la altura de los ojos en vez de en el piso.
                             const x = distance * Math.sin(bearingRad);
                             const z = -distance * Math.cos(bearingRad);
                             positionStr = `${x} 1.6 ${z}`;
                             
-                            // Escalar dinámicamente: a mayor distancia, más grande el modelo para que no desaparezca
                             entityScale = Math.max(2, distance / 15);
                         }
 
-                        // Ignoramos gps-new-entity-place activamente para tomar control total de X,Z espaciales.
                         return (
                             <a-entity
                                 key={poi.id}
