@@ -42,7 +42,8 @@ export default function ARScene() {
     const [worldRotation, setWorldRotation] = useState(0); // Offset rotacional del Rig de la cámara
     
     // UI states
-    const [isCalibrated, setIsCalibrated] = useState(false);
+    const [calibMode, setCalibMode] = useState('idle'); // idle | walking | calibrated
+    const [walkData, setWalkData] = useState(null);
     const cameraRef = useRef(null);
 
     useEffect(() => {
@@ -123,24 +124,76 @@ export default function ARScene() {
         };
     };
 
-    const handleAutoCalibrate = () => {
-        setIsCalibrated(true);
-        setStatus("✅ Grilla fijada. Usa las flechas para alinearla al mundo físico.");
-        addLog("INICIO CALIBRACION MANUAL");
-    };
-
-    const tuneRotation = (deg) => {
-        setWorldRotation(prev => (prev + deg) % 360);
-    };
-
-    const API_URL = "";
-
     // Calcular la posición actual del usuario (cámara) relativa al anchor 0,0,0
     let camX = 0, camZ = 0;
     if (anchorLoc && userLoc) {
         const coords = getLocalCoords(userLoc.lat, userLoc.lon, anchorLoc.lat, anchorLoc.lon);
         camX = coords.x;
         camZ = coords.z;
+    }
+
+    // Efecto de Odometría (Caminar 10 metros para alinear offset rotacional)
+    useEffect(() => {
+        if (calibMode === 'walking' && walkData && userLoc) {
+            const walkedDist = Math.hypot(camX - walkData.startX, camZ - walkData.startZ);
+            if (walkedDist >= 10 && cameraRef.current) {
+                // Sacamos el vector geográfico desde el punto A al punto B
+                const { bearing } = calculateDistanceAndBearing(walkData.startLat, walkData.startLon, userLoc.lat, userLoc.lon);
+                
+                let camYaw = 0;
+                if (cameraRef.current.object3D) {
+                    camYaw = cameraRef.current.object3D.rotation.y * (180/Math.PI);
+                }
+                
+                // Calculamos el offset para que el Rig empuje el lente (-Z) hacia el vector geográfico
+                const newRotation = (-bearing - camYaw) % 360;
+                setWorldRotation(newRotation);
+                
+                setCalibMode('calibrated');
+                setStatus(`✅ Grilla auto-alineada a trayectoria (${bearing.toFixed(0)}°)`);
+                addLog(`ODOM: Brng ${bearing.toFixed(1)} Yaw ${camYaw.toFixed(1)}`);
+            }
+        }
+    }, [camX, camZ, calibMode, walkData, userLoc]);
+
+    // Función del Minimapa 2D (Radar)
+    const renderRadar = () => {
+        if (!anchorLoc || calibMode !== 'calibrated') return null;
+        
+        const radarSize = 130; // px
+        const center = radarSize / 2;
+        const scale = 2.0; // 1 meter = 2 pixels para hacer el radar visualmente útil en caminatas cortas
+        
+        let camYaw = 0;
+        if (cameraRef.current && cameraRef.current.object3D) {
+            camYaw = cameraRef.current.object3D.rotation.y * (180/Math.PI);
+        }
+        const userForwardDegrees = (-worldRotation - camYaw);
+
+        return (
+            <div style={{ position: 'absolute', top: '15px', left: '15px', width: `${radarSize}px`, height: `${radarSize}px`, background: 'rgba(0,0,0,0.6)', border: '2px solid #4ecdc4', borderRadius: '50%', zIndex: 99990, pointerEvents: 'none', overflow: 'hidden', boxShadow: '0 0 10px rgba(78,205,196,0.5)' }}>
+                {/* Cuadrícula interna / Crosshair */}
+                <div style={{ position: 'absolute', top: 0, bottom: 0, left: '50%', width: '1px', background: 'rgba(255,255,255,0.1)' }}></div>
+                <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: '1px', background: 'rgba(255,255,255,0.1)' }}></div>
+                <div style={{ position: 'absolute', top: '2px', left: '50%', transform: 'translateX(-50%)', color: '#fff', fontSize: '10px', fontWeight: 'bold' }}>N</div>
+                
+                {/* Renderizar POIs en el radar */}
+                {pois.map(poi => {
+                    const coords = getLocalCoords(poi.lat, poi.lon, anchorLoc.lat, anchorLoc.lon);
+                    const px = center + (coords.x * scale);
+                    const py = center + (coords.z * scale);
+                    
+                    if (px < 0 || px > radarSize || py < 0 || py > radarSize) return null; // Simple clip
+                    
+                    return <div key={poi.id} style={{ position: 'absolute', left: `${px}px`, top: `${py}px`, width: '8px', height: '8px', background: '#ff6b6b', borderRadius: '50%', transform: 'translate(-50%, -50%)', border: '1px solid white' }} />
+                })}
+
+                {/* Renderizar Usuario (Cámara) */}
+                <div style={{ position: 'absolute', left: `${center + camX*scale}px`, top: `${center + camZ*scale}px`, transform: `translate(-50%, -50%) rotate(${userForwardDegrees}deg)`, transformOrigin: 'center center' }}>
+                    <div style={{ width: '0', height: '0', borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '12px solid #4ecdc4' }} />
+                </div>
+            </div>
+        );
     }
 
     return (
@@ -153,51 +206,59 @@ export default function ARScene() {
                     </div>
                 </div>
                 
-                {/* Cuadro de Inicio de Calibración */}
-                {!isCalibrated && anchorLoc && (
-                    <div style={{ position: 'absolute', top: '5rem', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.8)', padding: '1rem', borderRadius: '8px', color: 'white', pointerEvents: 'auto', border: '1px solid #4ECDC4', textAlign: 'center' }}>
-                        <h4 style={{ margin: '0 0 10px 0', color: '#4ECDC4' }}>Fijar Entorno 3D</h4>
-                        <p style={{ fontSize: '0.8rem', margin: '0 0 10px 0' }}>Estás parado en el centro de la grilla.<br/>Presiona para desplegar banderas.</p>
+                {/* 2D Minimap Radar */}
+                {renderRadar()}
+
+                {/* Cuadro de Inicio de Calibración Odometría */}
+                {calibMode === 'idle' && anchorLoc && (
+                    <div style={{ position: 'absolute', top: '5rem', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.8)', padding: '1rem', borderRadius: '8px', color: 'white', pointerEvents: 'auto', border: '1px solid #4ECDC4', textAlign: 'center', width: '85%', maxWidth: '350px' }}>
+                        <h4 style={{ margin: '0 0 10px 0', color: '#4ECDC4' }}>Construir Escena 3D</h4>
+                        <p style={{ fontSize: '0.8rem', margin: '0 0 10px 0' }}>El software detectó tu posición central. Para alinear el Norte Magnético automáticamente necesitamos trazar tu ruta.</p>
                         <button 
-                            onClick={handleAutoCalibrate}
-                            style={{ padding: '10px 20px', background: '#4ECDC4', color: '#111', fontWeight: 'bold', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                            onClick={() => {
+                                setCalibMode('walking');
+                                setWalkData({ startLat: userLoc.lat, startLon: userLoc.lon, startX: camX, startZ: camZ });
+                            }}
+                            style={{ padding: '10px 20px', background: '#4ECDC4', color: '#111', fontWeight: 'bold', border: 'none', borderRadius: '4px', cursor: 'pointer', width: '100%' }}
                         >
-                            Ver Mundo AR
+                            Calibrar Caminando (10m)
                         </button>
                     </div>
                 )}
                 
-                {/* Controles de Alineación Fina - Reemplaza el apuntado cruzado */}
-                {isCalibrated && (
-                     <div style={{ position: 'absolute', bottom: '5rem', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '15px', pointerEvents: 'auto', alignItems: 'center' }}>
-                         <div style={{ background: 'rgba(0,0,0,0.6)', padding: '5px', borderRadius: '8px', color: 'white', fontSize: '0.7rem', position: 'absolute', top: '-25px', left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>Alineación de Brújula</div>
-                        <button onClick={() => tuneRotation(-5)} style={{ padding: '12px 18px', background: 'rgba(20,20,40,0.8)', color: '#4ECDC4', border: '2px solid #4ECDC4', borderRadius: '8px', fontWeight: 'bold', fontSize: '1.2rem' }}>⟲ Giros Izq</button>
-                        <button onClick={() => tuneRotation(5)} style={{ padding: '12px 18px', background: 'rgba(20,20,40,0.8)', color: '#4ECDC4', border: '2px solid #4ECDC4', borderRadius: '8px', fontWeight: 'bold', fontSize: '1.2rem' }}>Giro Der ⟳</button>
+                {/* Cuadro durante la caminata */}
+                {calibMode === 'walking' && walkData && (
+                    <div style={{ position: 'absolute', top: '5rem', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.8)', padding: '1.5rem', borderRadius: '8px', color: 'white', pointerEvents: 'none', border: '2px solid #FF6B6B', textAlign: 'center', width: '85%', maxWidth: '350px' }}>
+                        <h4 style={{ margin: '0 0 10px 0', color: '#FF6B6B' }}>Caminando...</h4>
+                        <p style={{ fontSize: '0.9rem', margin: '0 0 10px 0' }}>Avanza en línea recta manteniendo el celular apuntado fijamente al frente en todo momento.</p>
+                        <h1 style={{ color: '#4ECDC4', margin: '15px 0 0 0' }}>
+                           {Math.hypot(camX - walkData.startX, camZ - walkData.startZ).toFixed(1)} / 10 m
+                        </h1>
                     </div>
                 )}
 
+                {/* Tarjeta de Información de POI desplazada hacia arriba */}
                 {activePoi && (
-                    <div style={{ position: 'absolute', bottom: '2rem', left: '1rem', right: '1rem', zIndex: 1001, maxHeight: '80vh', overflowY: 'auto' }} className="ar-info">
-                        <h3>{activePoi.name}</h3>
-                        <p>{activePoi.description}</p>
+                    <div style={{ position: 'absolute', top: '15%', left: '5%', right: '5%', zIndex: 1001, maxHeight: '60vh', overflowY: 'auto', background: 'rgba(20,20,30,0.95)', border: '1px solid #4ECDC4', borderRadius: '12px', padding: '15px', pointerEvents: 'auto' }} className="ar-info">
+                        <h3 style={{marginTop: 0, color: '#4ECDC4'}}>{activePoi.name}</h3>
+                        <p style={{color: 'white', fontSize: '0.9rem'}}>{activePoi.description}</p>
                         {activePoi.file_url && activePoi.file_type === 'pdf' && (
-                            <a href={`${API_URL}${activePoi.file_url}`} target="_blank" rel="noreferrer" className="btn-doc">📄 Ver Documento PDF</a>
+                            <a href={`${API_URL}${activePoi.file_url}`} target="_blank" rel="noreferrer" style={{display: 'block', margin: '10px 0', color: '#FF6B6B', textDecoration: 'underline'}}>📄 Ver Documento PDF</a>
                         )}
                         {activePoi.file_url && activePoi.file_type === 'image' && (
-                            <img src={`${API_URL}${activePoi.file_url}`} alt={activePoi.name} style={{width: '100%', maxHeight: '40vh', objectFit: 'contain', borderRadius: '8px', marginTop: '0.5rem'}} />
+                            <img src={`${API_URL}${activePoi.file_url}`} alt={activePoi.name} style={{width: '100%', maxHeight: '30vh', objectFit: 'contain', borderRadius: '8px', marginTop: '0.5rem'}} />
                         )}
-                        <button onClick={() => setActivePoi(null)} style={{background: 'rgba(255,255,255,0.1)', border:'1px solid white', color: 'white', padding: '0.7rem', marginTop: '1rem', borderRadius: '6px', width: '100%', cursor:'pointer', fontWeight:'bold'}}>Cerrar</button>
+                        <button onClick={() => setActivePoi(null)} style={{background: 'transparent', border:'1px solid white', color: 'white', padding: '0.7rem', marginTop: '1rem', borderRadius: '6px', width: '100%', cursor:'pointer', fontWeight:'bold'}}>Cerrar Ventana</button>
                     </div>
                 )}
                 
-                <div style={{ position: 'absolute', bottom: '1rem', right: '1rem', background: 'rgba(0,0,0,0.85)', padding: '0.8rem', borderRadius: '8px', color: '#0f0', fontSize: '0.7rem', pointerEvents: 'none', zIndex: 9998, maxWidth: '180px', fontFamily: 'monospace' }}>
-                    <strong style={{color: '#fff'}}>RIGID ARCH DEBUG</strong><br/>
+                <div style={{ position: 'absolute', bottom: '1rem', right: '1rem', background: 'rgba(0,0,0,0.85)', padding: '0.5rem', borderRadius: '8px', color: '#0f0', fontSize: '0.6rem', pointerEvents: 'none', zIndex: 9998, maxWidth: '140px', fontFamily: 'monospace' }}>
+                    <strong style={{color: '#fff'}}>GPS ODOMETRY</strong><br/>
                     {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
-                    <hr style={{borderColor: '#0f0'}}/>
+                    <hr style={{borderColor: '#0f0', margin: '4px 0'}}/>
                     <div>
-                        Offset Angular: {worldRotation}°<br/>
-                        Cam Translate:<br/>
-                        X: {camX.toFixed(3)} Z: {camZ.toFixed(3)}
+                        Offs: {worldRotation.toFixed(0)}°<br/>
+                        X: {camX.toFixed(2)} Z: {camZ.toFixed(2)}
                     </div>
                 </div>
             </div>
@@ -230,7 +291,7 @@ export default function ARScene() {
                 
                 <a-entity id="world-container">
                     {/* Visual Grid a ras del mundo real */}
-                    {isCalibrated && anchorLoc && (
+                    {calibMode === 'calibrated' && anchorLoc && (
                         <a-plane 
                             position="0 0 0" 
                             rotation="-90 0 0" 
@@ -244,7 +305,7 @@ export default function ARScene() {
                         </a-plane>
                     )}
 
-                    {isCalibrated && anchorLoc && pois.map(poi => {
+                    {calibMode === 'calibrated' && anchorLoc && pois.map(poi => {
                         // Coordenadas fijadas en vida real respecto al punto ancla Central
                         const coords = getLocalCoords(poi.lat, poi.lon, anchorLoc.lat, anchorLoc.lon);
                         const entityScale = Math.max(2, coords.distance / 15);
