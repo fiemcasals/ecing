@@ -265,7 +265,7 @@ export default function ARScene() {
                 
                 {/* Contenedor principal de Puntos. Su rotación anclada se actualiza en la calibración */}
                 <a-entity rotation={`0 ${worldRotation} 0`}>
-                    {pois.map(poi => {
+                    {isCalibrated && pois.map(poi => {
                         let positionStr = "0 1.6 0";
                         let entityScale = 2; 
                         
