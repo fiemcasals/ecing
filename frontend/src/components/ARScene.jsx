@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import axios from 'axios';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { ARButton, XR, Controllers } from '@react-three/xr';
-import { Text, Billboard, Grid, DeviceOrientationControls } from '@react-three/drei';
+import { Text, Billboard, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import { useCalibration } from '../context/CalibrationContext';
 
@@ -56,7 +56,7 @@ function POIMarker({ poi, anchorLoc, userPos, onClick }) {
     );
 }
 
-function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, worldRotation, onPoiClick, xrSessionActive }) {
+function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, worldRotation, onPoiClick }) {
     const worldRef = useRef();
 
     useFrame(() => {
@@ -68,9 +68,6 @@ function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, worldRotation
 
     return (
         <group ref={worldRef}>
-            {/* Pre-AR Orientation (Only active when NOT in WebXR mode) */}
-            {!xrSessionActive && <DeviceOrientationControls />}
-            
             {isCalibrated && (
                 <>
                     <Grid position={[0, -0.01, 0]} args={[400, 400]} cellColor="#4ecdc4" sectionColor="#4ecdc4" fadeDistance={100} infiniteGrid />
@@ -107,7 +104,8 @@ export default function ARScene() {
     const [camX, setCamX] = useState(0);
     const [camZ, setCamZ] = useState(0);
 
-    const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost';
+    // Detect if we are in a fully secure context (Valid SSL)
+    const isSecure = window.isSecureContext; 
 
     useEffect(() => {
         let watchId;
@@ -159,9 +157,10 @@ export default function ARScene() {
     return (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: '#000' }}>
             {!isSecure && (
-                <div style={{ position: 'absolute', top: '20%', left: '10%', right: '10%', background: 'rgba(255,0,0,0.9)', color: 'white', padding: '20px', borderRadius: '10px', zIndex: 10000, textAlign: 'center' }}>
-                    <h2 style={{margin:0}}>⚠️ Error de Seguridad</h2>
-                    <p>WebXR requiere **HTTPS** para acceder a la cámara. Esta conexión no es segura.</p>
+                <div style={{ position: 'absolute', top: '15%', left: '10%', right: '10%', background: 'rgba(255,0,0,0.95)', color: 'white', padding: '20px', borderRadius: '15px', zIndex: 10000, textAlign: 'center', boxShadow: '0 0 20px rgba(0,0,0,0.5)' }}>
+                    <h2 style={{margin:0}}>⚠️ CONEXIÓN NO SEGURA</h2>
+                    <p style={{fontSize:'0.9rem', margin:'10px 0'}}>Chrome no activará la cámara porque el certificado SSL de este sitio es inválido o falta (dice "No Seguro").</p>
+                    <p style={{fontSize:'0.8rem', opacity: 0.8}}>Debes usar un certificado válido (Let's Encrypt) para que WebXR funcione.</p>
                 </div>
             )}
 
@@ -178,7 +177,6 @@ export default function ARScene() {
                         pois={pois} anchorLoc={anchorLoc} camX={camX} camZ={camZ} 
                         isCalibrated={calibMode === 'calibrated'} 
                         worldRotation={worldRotation} onPoiClick={setActivePoi}
-                        xrSessionActive={xrSessionActive}
                     />
                 </XR>
             </Canvas>
@@ -191,7 +189,7 @@ export default function ARScene() {
                 {calibMode === 'idle' && anchorLoc && (
                     <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.9)', padding: '20px', borderRadius: '12px', pointerEvents: 'auto', textAlign: 'center', width: '85%', border: '2px solid #4ECDC4' }}>
                         <h3 style={{color: '#4ECDC4', marginTop: 0}}>Paso 1: Calibración</h3>
-                        <p style={{fontSize: '0.9rem', color: '#ccc'}}>Camina 15 metros en línea recta para vincular el mapa con el mundo real.</p>
+                        <p style={{fontSize: '0.9rem', color: '#ccc'}}>1. Apunta el celular hacia el frente.<br/>2. Camina 15 metros en línea recta sin girar.</p>
                         <button onClick={() => { setCalibMode('walking'); setWalkData({ startLat: userLoc.lat, startLon: userLoc.lon, startX: camX, startZ: camZ }); }} className="primary" style={{width:'100%', padding:'15px'}}>Iniciar Caminata (15m)</button>
                     </div>
                 )}
@@ -208,7 +206,6 @@ export default function ARScene() {
                     <div style={{ position: 'absolute', top: '15%', left: '5%', right: '5%', background: 'rgba(20,20,30,0.98)', border: '1px solid #4ECDC4', borderRadius: '15px', padding: '20px', pointerEvents: 'auto', maxHeight: '70vh', overflowY: 'auto' }}>
                         <h2 style={{ color: '#4ECDC4', marginTop: 0 }}>{activePoi.name}</h2>
                         <p style={{color: '#eee'}}>{activePoi.description}</p>
-                        {/* URL Correction logic can be added here if needed */}
                         <button onClick={() => setActivePoi(null)} className="primary" style={{ marginTop: '20px', width:'100%' }}>Cerrar</button>
                     </div>
                 )}
