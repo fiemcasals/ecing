@@ -4,39 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>AR Geolocation</title>
-    <!-- A-Frame -->
-    <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
-    <!-- AR.js con soporte GPS Exclusivo -->
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/three.js/build/ar-threex-location-only.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-    <script src="https://unpkg.com/aframe-look-at-component@0.8.0/dist/aframe-look-at-component.min.js"></script>
+    <title>AR Geolocation WebXR</title>
     <script>
-        AFRAME.registerComponent('look-at-y', {
-            schema: { type: 'selector' },
-            tick: function () {
-                if (!this.data) return;
-                var target3D = this.data.object3D;
-                var source3D = this.el.object3D;
-                
-                var targetPos = new THREE.Vector3();
-                target3D.getWorldPosition(targetPos);
-                var sourcePos = new THREE.Vector3();
-                source3D.getWorldPosition(sourcePos);
-                
-                // Lock Y axis to prevent pitch/roll (Billboard effect fix)
-                targetPos.y = sourcePos.y;
-                source3D.lookAt(targetPos);
-            }
-        });
-
-        AFRAME.registerComponent('clickhandler', {
-            init: function () {
-                this.el.addEventListener('click', () => {
-                    const id = this.el.getAttribute('data-id');
-                    window.dispatchEvent(new CustomEvent('poi-clicked', { detail: id }));
-                });
-            }
-        });
+        // Custom events for POI clicks handled via React Three Fiber now
     </script>
   </head>
   <body style="margin: 0;">
