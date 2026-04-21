@@ -156,19 +156,39 @@ export default function ARScene() {
         }
     }, [camX, camZ, calibMode, walkData, userLoc]);
 
+    // Actualizar UI de alto rendimiento (60fps) fuera del ciclo de render de React
+    useEffect(() => {
+        let frameId;
+        const updateUI = () => {
+            if (cameraRef.current && cameraRef.current.object3D) {
+                const camYaw = cameraRef.current.object3D.rotation.y * (180/Math.PI);
+                const userForwardDegrees = (-worldRotation - camYaw);
+                
+                const compass = document.getElementById('radar-compass');
+                if (compass) {
+                    compass.style.transform = `translate(-50%, -50%) rotate(${userForwardDegrees}deg)`;
+                }
+                
+                const telemetry = document.getElementById('telemetry-data');
+                if (telemetry) {
+                    telemetry.innerHTML = `Offs: ${worldRotation.toFixed(0)}°<br/>X: ${camX.toFixed(2)} Z: ${camZ.toFixed(2)}`;
+                }
+            }
+            frameId = requestAnimationFrame(updateUI);
+        };
+        frameId = requestAnimationFrame(updateUI);
+        return () => cancelAnimationFrame(frameId);
+    }, [worldRotation, camX, camZ]);
+
     // Función del Minimapa 2D (Radar)
     const renderRadar = () => {
         if (!anchorLoc || calibMode !== 'calibrated') return null;
         
         const radarSize = 130; // px
         const center = radarSize / 2;
-        const scale = 2.0; // 1 meter = 2 pixels para hacer el radar visualmente útil en caminatas cortas
-        
-        let camYaw = 0;
-        if (cameraRef.current && cameraRef.current.object3D) {
-            camYaw = cameraRef.current.object3D.rotation.y * (180/Math.PI);
-        }
-        const userForwardDegrees = (-worldRotation - camYaw);
+        const radarSize = 130; // px
+        const center = radarSize / 2;
+        const scale = 2.0;
 
         return (
             <div style={{ position: 'absolute', top: '15px', left: '15px', width: `${radarSize}px`, height: `${radarSize}px`, background: 'rgba(0,0,0,0.6)', border: '2px solid #4ecdc4', borderRadius: '50%', zIndex: 99990, pointerEvents: 'none', overflow: 'hidden', boxShadow: '0 0 10px rgba(78,205,196,0.5)' }}>
@@ -189,7 +209,7 @@ export default function ARScene() {
                 })}
 
                 {/* Renderizar Usuario (Cámara) */}
-                <div style={{ position: 'absolute', left: `${center + camX*scale}px`, top: `${center + camZ*scale}px`, transform: `translate(-50%, -50%) rotate(${userForwardDegrees}deg)`, transformOrigin: 'center center' }}>
+                <div id="radar-compass" style={{ position: 'absolute', left: `${center + camX*scale}px`, top: `${center + camZ*scale}px`, transformOrigin: 'center center' }}>
                     <div style={{ width: '0', height: '0', borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '12px solid #4ecdc4' }} />
                 </div>
             </div>
@@ -239,7 +259,7 @@ export default function ARScene() {
 
                 {/* Tarjeta de Información de POI desplazada hacia arriba */}
                 {activePoi && (
-                    <div style={{ position: 'absolute', top: '15%', left: '5%', right: '5%', zIndex: 1001, maxHeight: '60vh', overflowY: 'auto', background: 'rgba(20,20,30,0.95)', border: '1px solid #4ECDC4', borderRadius: '12px', padding: '15px', pointerEvents: 'auto' }} className="ar-info">
+                    <div onPointerDown={(e) => e.stopPropagation()} style={{ position: 'absolute', top: '15%', left: '5%', right: '5%', zIndex: 1001, maxHeight: '60vh', overflowY: 'auto', background: 'rgba(20,20,30,0.95)', border: '1px solid #4ECDC4', borderRadius: '12px', padding: '15px', pointerEvents: 'auto' }} className="ar-info">
                         <h3 style={{marginTop: 0, color: '#4ECDC4'}}>{activePoi.name}</h3>
                         <p style={{color: 'white', fontSize: '0.9rem'}}>{activePoi.description}</p>
                         {activePoi.file_url && activePoi.file_type === 'pdf' && (
@@ -256,7 +276,7 @@ export default function ARScene() {
                     <strong style={{color: '#fff'}}>GPS ODOMETRY</strong><br/>
                     {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
                     <hr style={{borderColor: '#0f0', margin: '4px 0'}}/>
-                    <div>
+                    <div id="telemetry-data">
                         Offs: {worldRotation.toFixed(0)}°<br/>
                         X: {camX.toFixed(2)} Z: {camZ.toFixed(2)}
                     </div>
@@ -277,7 +297,7 @@ export default function ARScene() {
                   El offset de la brújula solo se aplica para rotar a la Cámara, garantizando coherencia rotacional al caminar.
                 */}
                 <a-entity id="cameraRig" position={`${camX} 0 ${camZ}`} rotation={`0 ${worldRotation} 0`}>
-                    <a-camera ref={cameraRef} id="main-camera" look-controls="touchEnabled: false" camera="far: 150000; fov: 80;">
+                    <a-camera ref={cameraRef} id="main-camera" look-controls="touchEnabled: false" camera="far: 150000;">
                         <a-cursor
                           color="#4ECDC4"
                           fuse="false"
@@ -293,7 +313,7 @@ export default function ARScene() {
                     {/* Visual Grid a ras del mundo real */}
                     {calibMode === 'calibrated' && anchorLoc && (
                         <a-plane 
-                            position="0 0 0" 
+                            position="0 -0.2 0" 
                             rotation="-90 0 0" 
                             width="200" 
                             height="200" 
@@ -314,7 +334,7 @@ export default function ARScene() {
                             <a-entity
                                 key={poi.id}
                                 position={`${coords.x} 1.6 ${coords.z}`}
-                                look-at="#main-camera"
+                                look-at-y="#main-camera"
                                 scale={`${entityScale} ${entityScale} ${entityScale}`}
                             >
                                 <a-box 
