@@ -350,8 +350,9 @@ export default function ARScene() {
                                 <a-plane color="#4ECDC4" height="1" width="1.5" position="0.75 0 0" material="side: double"></a-plane>
                                 
                                 <a-plane color="#1a1a2e" height="0.8" width="2.5" position="0 1.5 0" material="opacity: 0.9; side: double">
-                                     <a-text value={poi.name} align="center" color="#4ECDC4" scale="0.8 0.8 0.8" position="0 0.1 0.01"></a-text>
-                                     <a-text value="Toca para Detalles" align="center" color="#FFFFFF" scale="0.3 0.3 0.3" position="0 -0.25 0.01"></a-text>
+                                     <a-text value={poi.name} align="center" color="#4ECDC4" scale="0.8 0.8 0.8" position="0 0.2 0.01"></a-text>
+                                     <a-text value={`${Math.hypot(coords.x - camX, coords.z - camZ).toFixed(1)} m`} align="center" color="#FF6B6B" scale="0.5 0.5 0.5" position="0 -0.05 0.01"></a-text>
+                                     <a-text value="Toca para Detalles" align="center" color="#FFFFFF" scale="0.3 0.3 0.3" position="0 -0.3 0.01"></a-text>
                                 </a-plane>
                             </a-entity>
                         );
