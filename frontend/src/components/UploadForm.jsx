@@ -1,17 +1,25 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import { useCalibration } from '../context/CalibrationContext';
+import { useNavigate } from 'react-router-dom';
 
 export default function UploadForm() {
+    const { isCalibrated } = useCalibration();
+    const navigate = useNavigate();
     const [formData, setFormData] = useState({ name: '', lat: '', lon: '', description: '' });
     const [file, setFile] = useState(null);
     const [status, setStatus] = useState('');
 
     const handleGPS = () => {
+        if (!isCalibrated) {
+            setStatus("⚠️ Debes calibrar primero en la pestaña de RA.");
+            return;
+        }
         if ("geolocation" in navigator) {
-            setStatus("Obteniendo GPS...");
+            setStatus("Obteniendo GPS con alta precisión...");
             navigator.geolocation.getCurrentPosition((pos) => {
                 setFormData(prev => ({ ...prev, lat: pos.coords.latitude, lon: pos.coords.longitude }));
-                setStatus("GPS obtenido correctamente");
+                setStatus(`📍 GPS Fijado (Precisión: ${pos.coords.accuracy.toFixed(1)}m)`);
             }, (err) => setStatus("Error al obtener GPS: " + err.message),
             { enableHighAccuracy: true });
         } else {
@@ -21,6 +29,10 @@ export default function UploadForm() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (!isCalibrated) {
+            alert("Por favor, calibra el sistema caminando 15m antes de subir un punto.");
+            return;
+        }
         setStatus("Subiendo datos...");
         
         const data = new FormData();
@@ -43,7 +55,20 @@ export default function UploadForm() {
     return (
         <div className="upload-container">
             <h2 style={{marginTop: 0, color: '#4ECDC4'}}>Añadir Nuevo Punto (POI)</h2>
-            <form onSubmit={handleSubmit}>
+            
+            {!isCalibrated ? (
+                <div style={{ background: 'rgba(255,107,107,0.1)', border: '1px solid #FF6B6B', padding: '15px', borderRadius: '8px', marginBottom: '20px', textAlign: 'center' }}>
+                    <p style={{ color: '#FF6B6B', fontWeight: 'bold', margin: '0 0 10px 0' }}>⚠️ SE REQUIERE CALIBRACIÓN</p>
+                    <p style={{ fontSize: '0.85rem', color: '#ccc', margin: '0 0 15px 0' }}>Para asegurar que tus puntos aparezcan donde deben, necesitamos que realices la caminata de calibración una vez por sesión.</p>
+                    <button onClick={() => navigate('/ar')} className="primary" style={{ background: '#FF6B6B' }}>Ir a Calibrar (15 metros) 🚶‍♂️</button>
+                </div>
+            ) : (
+                <div style={{ background: 'rgba(78,205,196,0.1)', border: '1px solid #4ECDC4', padding: '10px', borderRadius: '8px', marginBottom: '20px', textAlign: 'center', color: '#4ECDC4', fontSize: '0.9rem' }}>
+                    ✅ Sistema Calibrado y Listo
+                </div>
+            )}
+
+            <form onSubmit={handleSubmit} style={{ opacity: isCalibrated ? 1 : 0.5, pointerEvents: isCalibrated ? 'auto' : 'none' }}>
                 <div className="form-group">
                     <label>Nombre del Lugar / Indicador</label>
                     <input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ej: Suelo Blando" />
@@ -64,12 +89,12 @@ export default function UploadForm() {
                 </div>
 
                 <div className="form-group">
-                    <label>Adjuntar PDF o Imagen (Opcional)</label>
-                    <input type="file" onChange={e => setFile(e.target.files[0])} accept="image/*,.pdf" />
+                    <label>Adjuntar Multimedia (Opcional)</label>
+                    <input type="file" onChange={e => setFile(e.target.files[0])} accept="image/*,video/*" />
                 </div>
 
-                <button type="submit" className="primary">Guardar Punto</button>
-                {status && <p style={{marginTop: '1rem', color: status.includes('Error') ? '#ff4444' : '#4ECDC4', fontWeight: 'bold'}}>{status}</p>}
+                <button type="submit" className="primary" disabled={!isCalibrated}>Guardar Punto</button>
+                {status && <p style={{marginTop: '1rem', color: status.includes('Error') || status.includes('⚠️') ? '#ff4444' : '#4ECDC4', fontWeight: 'bold'}}>{status}</p>}
                 
                 <hr style={{margin: '2rem 0', borderColor: '#4ECDC4', opacity: 0.2}} />
                 
@@ -82,8 +107,8 @@ export default function UploadForm() {
                             setStatus("Error al limpiar DB: " + err.message);
                         }
                     }
-                }} style={{background: '#ff4444', color: 'white', border: 'none', padding: '1rem', borderRadius: '4px', cursor: 'pointer', width: '100%', fontWeight: 'bold'}}>
-                    ⚠️ LIMPIAR TODA LA BASE DE DATOS
+                }} style={{background: '#661111', color: 'white', border: 'none', padding: '1rem', borderRadius: '4px', cursor: 'pointer', width: '100%', fontWeight: 'normal', fontSize: '0.8rem'}}>
+                    🗑️ LIMPIAR TODA LA BASE DE DATOS
                 </button>
             </form>
         </div>

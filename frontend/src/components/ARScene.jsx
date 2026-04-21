@@ -2,33 +2,26 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import axios from 'axios';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { ARButton, XR, Controllers } from '@react-three/xr';
-import { Text, Billboard, Grid } from '@react-three/drei';
+import { Text, Billboard, Grid, DeviceOrientationControls } from '@react-three/drei';
 import * as THREE from 'three';
+import { useCalibration } from '../context/CalibrationContext';
 
-const API_URL = ""; // Base URL for API
+const API_URL = ""; 
 
 // --- MATHS ---
 function calculateDistanceAndBearing(lat1, lon1, lat2, lon2) {
     const R = 6371e3;
     const fLat1 = parseFloat(lat1), fLon1 = parseFloat(lon1);
     const fLat2 = parseFloat(lat2), fLon2 = parseFloat(lon2);
-
     const φ1 = fLat1 * Math.PI/180;
     const φ2 = fLat2 * Math.PI/180;
     const Δφ = (fLat2-fLat1) * Math.PI/180;
     const Δλ = (fLon2-fLon1) * Math.PI/180;
-
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    const distance = R * c;
-
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const distance = R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
     const y = Math.sin(Δλ) * Math.cos(φ2);
-    const x = Math.cos(φ1)*Math.sin(φ2) -
-              Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
-    let brng = Math.atan2(y, x);
-    brng = (brng * 180 / Math.PI + 360) % 360;
+    const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+    let brng = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
     return { distance, bearing: brng };
 }
 
@@ -38,73 +31,36 @@ function POIMarker({ poi, anchorLoc, userPos, onClick }) {
     const coords = useMemo(() => {
         const { distance, bearing } = calculateDistanceAndBearing(anchorLoc.lat, anchorLoc.lon, poi.lat, poi.lon);
         const bearingRad = bearing * Math.PI / 180;
-        return {
-            x: distance * Math.sin(bearingRad),
-            z: -distance * Math.cos(bearingRad),
-            distance
-        };
+        return { x: distance * Math.sin(bearingRad), z: -distance * Math.cos(bearingRad), distance };
     }, [poi, anchorLoc]);
 
     const distToUser = Math.hypot(coords.x - userPos.x, coords.z - userPos.z);
-    // Dynamic scale based on distance, but capped
     const scale = Math.min(3, Math.max(1, distToUser / 20));
 
     return (
         <group position={[coords.x, 0, coords.z]} scale={[scale, scale, scale]}>
-            <Billboard position={[0, 1.5, 0]} follow={true}>
-                {/* Pointer / Pin */}
+            <Billboard position={[0, 1.5, 0]}>
                 <mesh position={[0, -0.5, 0]}>
                     <cylinderGeometry args={[0.02, 0.02, 2]} />
                     <meshStandardMaterial color="white" />
                 </mesh>
-                
-                {/* Main Flag Plane */}
                 <mesh position={[0, 0, 0]} onClick={onClick}>
                     <planeGeometry args={[2, 1.2]} />
                     <meshStandardMaterial color="#1a1a2e" opacity={0.9} transparent />
                 </mesh>
-
-                {/* Text Content */}
-                <Text
-                    position={[0, 0.25, 0.05]}
-                    fontSize={0.2}
-                    color="#4ECDC4"
-                    anchorX="center"
-                    anchorY="middle"
-                    maxWidth={1.8}
-                >
-                    {poi.name}
-                </Text>
-                <Text
-                    position={[0, -0.05, 0.05]}
-                    fontSize={0.15}
-                    color="#FF6B6B"
-                    anchorX="center"
-                    anchorY="middle"
-                >
-                    {`${distToUser.toFixed(1)} m`}
-                </Text>
-                <Text
-                    position={[0, -0.35, 0.05]}
-                    fontSize={0.1}
-                    color="white"
-                    anchorX="center"
-                    anchorY="middle"
-                >
-                    Toca para detalles
-                </Text>
+                <Text position={[0, 0.25, 0.05]} fontSize={0.2} color="#4ECDC4" anchorX="center" anchorY="middle" maxWidth={1.8}>{poi.name}</Text>
+                <Text position={[0, -0.05, 0.05]} fontSize={0.15} color="#FF6B6B" anchorX="center" anchorY="middle">{`${distToUser.toFixed(1)} m`}</Text>
+                <Text position={[0, -0.35, 0.05]} fontSize={0.1} color="white" anchorX="center" anchorY="middle">Toca para detalles</Text>
             </Billboard>
         </group>
     );
 }
 
-function SceneContent({ pois, anchorLoc, userLoc, worldRotation, camX, camZ, calibMode, onPoiClick }) {
+function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, worldRotation, onPoiClick, xrSessionActive }) {
     const worldRef = useRef();
 
-    useFrame((state) => {
+    useFrame(() => {
         if (worldRef.current) {
-            // Apply GPS translation and Calibration rotation
-            // We set height to -1.4 (approx eye level to floor)
             worldRef.current.position.set(-camX, -1.4, -camZ);
             worldRef.current.rotation.y = THREE.MathUtils.degToRad(worldRotation);
         }
@@ -112,34 +68,18 @@ function SceneContent({ pois, anchorLoc, userLoc, worldRotation, camX, camZ, cal
 
     return (
         <group ref={worldRef}>
-            {calibMode === 'calibrated' && (
+            {/* Pre-AR Orientation (Only active when NOT in WebXR mode) */}
+            {!xrSessionActive && <DeviceOrientationControls />}
+            
+            {isCalibrated && (
                 <>
-                    {/* Infinite-like Grid using Drei */}
-                    <Grid 
-                        position={[0, -0.01, 0]}
-                        args={[400, 400]} 
-                        cellColor="#4ecdc4" 
-                        sectionColor="#4ecdc4" 
-                        fadeDistance={100} 
-                        cellThickness={1}
-                        sectionThickness={1.5}
-                        infiniteGrid
-                    />
-                    
-                    {/* Compass North Indicator */}
+                    <Grid position={[0, -0.01, 0]} args={[400, 400]} cellColor="#4ecdc4" sectionColor="#4ecdc4" fadeDistance={100} infiniteGrid />
                     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
-                        <ringGeometry args={[1, 1.2, 32]} />
+                        <ringGeometry args={[1, 1.1, 32]} />
                         <meshBasicMaterial color="#FF6B6B" transparent opacity={0.5} />
                     </mesh>
-
                     {pois.map(poi => (
-                        <POIMarker 
-                            key={poi.id} 
-                            poi={poi} 
-                            anchorLoc={anchorLoc} 
-                            userPos={{x: camX, z: camZ}} 
-                            onClick={() => onPoiClick(poi)} 
-                        />
+                        <POIMarker key={poi.id} poi={poi} anchorLoc={anchorLoc} userPos={{x: camX, z: camZ}} onClick={() => onPoiClick(poi)} />
                     ))}
                 </>
             )}
@@ -152,22 +92,22 @@ function SceneContent({ pois, anchorLoc, userLoc, worldRotation, camX, camZ, cal
 // --- MAIN COMPONENT ---
 
 export default function ARScene() {
+    const { isCalibrated, worldRotation, updateCalibration } = useCalibration();
     const [pois, setPois] = useState([]);
     const [status, setStatus] = useState("Obteniendo GPS...");
     const [activePoi, setActivePoi] = useState(null);
-    const [debugLogs, setDebugLogs] = useState(["WebXR Optimized"]);
-    const addLog = (msg) => setDebugLogs(prev => [...prev, msg].slice(-5));
+    const [xrSessionActive, setXrSessionActive] = useState(false);
+    const [debugLogs, setDebugLogs] = useState(["WebXR Diagnostics Active"]);
+    const addLog = (msg) => setDebugLogs(prev => [...prev, msg].slice(-6));
 
     const [userLoc, setUserLoc] = useState(null);
     const [anchorLoc, setAnchorLoc] = useState(null);
-    const [worldRotation, setWorldRotation] = useState(0);
-
-    const [calibMode, setCalibMode] = useState('idle');
+    const [calibMode, setCalibMode] = useState(isCalibrated ? 'calibrated' : 'idle');
     const [walkData, setWalkData] = useState(null);
-
-    // Meters from anchor
     const [camX, setCamX] = useState(0);
     const [camZ, setCamZ] = useState(0);
+
+    const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost';
 
     useEffect(() => {
         let watchId;
@@ -175,7 +115,8 @@ export default function ARScene() {
             try {
                 const response = await axios.get(`/api/pois/nearby`, { params: { lat, lon, max_distance: 2.0 } });
                 setPois(response.data);
-                setStatus(response.data.length > 0 ? "GPS Fijado. Camina para calibrar." : "No hay puntos cerca.");
+                if (!isCalibrated) setStatus("GPS Listo. Camina para calibrar.");
+                else setStatus("✅ Escena Alineada");
             } catch (err) { addLog(`Error Fetch: ${err.message}`); }
         };
 
@@ -190,9 +131,8 @@ export default function ARScene() {
             }, (err) => addLog(`GPS Error: ${err.message}`), { enableHighAccuracy: true });
         }
         return () => navigator.geolocation.clearWatch(watchId);
-    }, []);
+    }, [isCalibrated]);
 
-    // Update camX / camZ when userLoc changes
     useEffect(() => {
         if (anchorLoc && userLoc) {
             const { distance, bearing } = calculateDistanceAndBearing(anchorLoc.lat, anchorLoc.lon, userLoc.lat, userLoc.lon);
@@ -202,63 +142,65 @@ export default function ARScene() {
         }
     }, [userLoc, anchorLoc]);
 
-    // Odometry Calibration (Increase to 15m for better precision)
-    const TARGET_WALK_DIST = 15;
     useEffect(() => {
+        const TARGET_WALK_DIST = 15;
         if (calibMode === 'walking' && walkData && userLoc) {
             const walkedDist = Math.hypot(camX - walkData.startX, camZ - walkData.startZ);
             if (walkedDist >= TARGET_WALK_DIST) {
                 const { bearing } = calculateDistanceAndBearing(walkData.startLat, walkData.startLon, userLoc.lat, userLoc.lon);
-                setWorldRotation(-bearing);
+                updateCalibration(-bearing);
                 setCalibMode('calibrated');
-                setStatus("✅ Escena Alineada");
+                setStatus("✅ Calibración Exitosa");
+                addLog("Distancia completada. Norte fijado.");
             }
         }
-    }, [camX, camZ, calibMode, walkData, userLoc]);
+    }, [camX, camZ, calibMode, walkData, userLoc, updateCalibration]);
 
     return (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: '#000' }}>
-            <ARButton />
+            {!isSecure && (
+                <div style={{ position: 'absolute', top: '20%', left: '10%', right: '10%', background: 'rgba(255,0,0,0.9)', color: 'white', padding: '20px', borderRadius: '10px', zIndex: 10000, textAlign: 'center' }}>
+                    <h2 style={{margin:0}}>⚠️ Error de Seguridad</h2>
+                    <p>WebXR requiere **HTTPS** para acceder a la cámara. Esta conexión no es segura.</p>
+                </div>
+            )}
+
+            <ARButton 
+                onError={(err) => addLog(`WebXR Error: ${err.message || 'Desconocido'}`)}
+                onSessionStart={() => { setXrSessionActive(true); addLog("WebXR Session Started"); }}
+                onSessionEnd={() => { setXrSessionActive(false); addLog("WebXR Session Ended"); }}
+            />
+
             <Canvas shadows camera={{ fov: 70, near: 0.1, far: 1000 }}>
                 <XR>
                     <Controllers />
                     <SceneContent 
-                        pois={pois} 
-                        anchorLoc={anchorLoc} 
-                        userLoc={userLoc} 
-                        worldRotation={worldRotation} 
-                        camX={camX} 
-                        camZ={camZ} 
-                        calibMode={calibMode}
-                        onPoiClick={setActivePoi}
+                        pois={pois} anchorLoc={anchorLoc} camX={camX} camZ={camZ} 
+                        isCalibrated={calibMode === 'calibrated'} 
+                        worldRotation={worldRotation} onPoiClick={setActivePoi}
+                        xrSessionActive={xrSessionActive}
                     />
                 </XR>
             </Canvas>
 
-            {/* UI Overlay */}
             <div className="ar-overlay" style={{ pointerEvents: 'none' }}>
                 <div style={{ textAlign: 'center', pointerEvents: 'auto' }}>
-                    <div style={{ background: 'rgba(0,0,0,0.8)', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4' }}>
-                        {status}
-                    </div>
+                    <div style={{ background: 'rgba(0,0,0,0.85)', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4' }}>{status}</div>
                 </div>
 
                 {calibMode === 'idle' && anchorLoc && (
-                    <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.85)', padding: '20px', borderRadius: '12px', pointerEvents: 'auto', textAlign: 'center', width: '85%', border: '1px solid #4ECDC4' }}>
-                        <h3 style={{color: '#4ECDC4'}}>Calibración WebXR</h3>
-                        <p style={{fontSize: '0.9rem'}}>Camina 15 metros en línea recta para fijar el Norte geográfico.</p>
-                        <button onClick={() => {
-                            setCalibMode('walking');
-                            setWalkData({ startLat: userLoc.lat, startLon: userLoc.lon, startX: camX, startZ: camZ });
-                        }} className="primary">Empezar Calibración</button>
+                    <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.9)', padding: '20px', borderRadius: '12px', pointerEvents: 'auto', textAlign: 'center', width: '85%', border: '2px solid #4ECDC4' }}>
+                        <h3 style={{color: '#4ECDC4', marginTop: 0}}>Paso 1: Calibración</h3>
+                        <p style={{fontSize: '0.9rem', color: '#ccc'}}>Camina 15 metros en línea recta para vincular el mapa con el mundo real.</p>
+                        <button onClick={() => { setCalibMode('walking'); setWalkData({ startLat: userLoc.lat, startLon: userLoc.lon, startX: camX, startZ: camZ }); }} className="primary" style={{width:'100%', padding:'15px'}}>Iniciar Caminata (15m)</button>
                     </div>
                 )}
 
                 {calibMode === 'walking' && (
                     <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.9)', padding: '20px', borderRadius: '12px', color: 'white', textAlign: 'center', border: '2px solid #FF6B6B' }}>
-                         <div style={{fontSize: '0.8rem', color: '#FF6B6B'}}>PROGRESO</div>
-                         <h1 style={{margin: '10px 0'}}>{Math.hypot(camX - walkData.startX, camZ - walkData.startZ).toFixed(1)} / {TARGET_WALK_DIST}m</h1>
-                         <p style={{fontSize: '0.7rem'}}>Avanza de frente sin girar el dispositivo</p>
+                         <div style={{fontSize: '0.8rem', color: '#FF6B6B'}}>CALIBRANDO...</div>
+                         <h1 style={{margin: '10px 0'}}>{Math.hypot(camX - walkData.startX, camZ - walkData.startZ).toFixed(1)} / 15m</h1>
+                         <p style={{fontSize: '0.7rem'}}>Mantén el celular apuntando al frente</p>
                     </div>
                 )}
 
@@ -266,19 +208,14 @@ export default function ARScene() {
                     <div style={{ position: 'absolute', top: '15%', left: '5%', right: '5%', background: 'rgba(20,20,30,0.98)', border: '1px solid #4ECDC4', borderRadius: '15px', padding: '20px', pointerEvents: 'auto', maxHeight: '70vh', overflowY: 'auto' }}>
                         <h2 style={{ color: '#4ECDC4', marginTop: 0 }}>{activePoi.name}</h2>
                         <p style={{color: '#eee'}}>{activePoi.description}</p>
-                        {activePoi.file_url && activePoi.file_type === 'image' && <img src={`${API_URL}${activePoi.file_url}`} style={{ width: '100%', borderRadius: '8px' }} />}
-                        {activePoi.file_url && activePoi.file_type === 'video' && <video src={`${API_URL}${activePoi.file_url}`} controls style={{ width: '100%', borderRadius: '8px' }} />}
-                        <button onClick={() => setActivePoi(null)} className="primary" style={{ marginTop: '20px' }}>Cerrar</button>
+                        {/* URL Correction logic can be added here if needed */}
+                        <button onClick={() => setActivePoi(null)} className="primary" style={{ marginTop: '20px', width:'100%' }}>Cerrar</button>
                     </div>
                 )}
 
-                <div style={{ position: 'absolute', bottom: '20px', right: '20px', background: 'rgba(0,0,0,0.8)', color: '#0f0', padding: '8px', fontSize: '10px', borderRadius: '4px', fontFamily: 'monospace' }}>
-                    <strong>TELEMETRÍA</strong><br/>
+                <div style={{ position: 'absolute', bottom: '20px', right: '20px', background: 'rgba(0,0,0,0.85)', color: '#0f0', padding: '10px', fontSize: '10px', borderRadius: '4px', fontFamily: 'monospace', maxWidth: '200px' }}>
+                    <strong style={{color:'#fff'}}>DEBUG CONSOLE</strong><br/>
                     {debugLogs.map((l, i) => <div key={i}>{l}</div>)}
-                    <hr style={{borderColor: '#333'}} />
-                    LAT: {userLoc?.lat.toFixed(5)}<br/>
-                    LON: {userLoc?.lon.toFixed(5)}<br/>
-                    X: {camX.toFixed(2)} Z: {camZ.toFixed(2)}
                 </div>
             </div>
         </div>
