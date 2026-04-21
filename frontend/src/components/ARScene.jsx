@@ -186,8 +186,6 @@ export default function ARScene() {
         
         const radarSize = 130; // px
         const center = radarSize / 2;
-        const radarSize = 130; // px
-        const center = radarSize / 2;
         const scale = 2.0;
 
         return (
