@@ -56,7 +56,7 @@ function POIMarker({ poi, anchorLoc, userPos, onClick }) {
     );
 }
 
-function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, worldRotation, onPoiClick }) {
+function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, calibMode, worldRotation, onPoiClick }) {
     const worldRef = useRef();
 
     useFrame(() => {
@@ -94,6 +94,7 @@ export default function ARScene() {
     const [status, setStatus] = useState("Obteniendo GPS...");
     const [activePoi, setActivePoi] = useState(null);
     const [xrSessionActive, setXrSessionActive] = useState(false);
+    const [debugLogs, setDebugLogs] = useState(["WebXR Diagnostics Active"]);
     const sessionId = useMemo(() => `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, []);
     const addLog = (msg, meta = null) => {
         setDebugLogs(prev => [...prev, msg].slice(-6));
