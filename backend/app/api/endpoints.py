@@ -10,6 +10,9 @@ from .. import models, schemas
 from ..database import get_db
 from ..services.geolocation import get_nearby_objects
 
+router = APIRouter()
+
+UPLOAD_DIR = "uploads"
 LOGS_BASE_DIR = "logs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(LOGS_BASE_DIR, exist_ok=True)

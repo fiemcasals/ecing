@@ -115,7 +115,7 @@ export default function ARScene() {
     const [walkData, setWalkData] = useState(null);
     const [camX, setCamX] = useState(0);
     const [camZ, setCamZ] = useState(0);
-    const overlayRef = useRef();
+    const [overlayElement, setOverlayElement] = useState(null);
 
     const takeScreenshot = () => {
         addLog("Intentando capturar...");
@@ -215,15 +215,17 @@ export default function ARScene() {
                 </div>
             )}
 
-            <ARButton 
-                onError={(err) => addLog(`WebXR Error: ${err.message || 'Desconocido'}`)}
-                onSessionStart={() => { setXrSessionActive(true); addLog("WebXR Session Started"); }}
-                onSessionEnd={() => { setXrSessionActive(false); addLog("WebXR Session Ended"); }}
-                sessionInit={{
-                    requiredFeatures: ['local-floor', 'dom-overlay'],
-                    domOverlay: { root: overlayRef.current }
-                }}
-            />
+            {overlayElement && (
+                <ARButton 
+                    onError={(err) => addLog(`WebXR Error: ${err.message || 'Desconocido'}`)}
+                    onSessionStart={() => { setXrSessionActive(true); addLog("WebXR Session Started"); }}
+                    onSessionEnd={() => { setXrSessionActive(false); addLog("WebXR Session Ended"); }}
+                    sessionInit={{
+                        optionalFeatures: ['local-floor', 'dom-overlay'],
+                        domOverlay: { root: overlayElement }
+                    }}
+                />
+            )}
 
             <Canvas 
                 shadows 
@@ -247,7 +249,7 @@ export default function ARScene() {
                 </XR>
             </Canvas>
 
-            <div className="ar-overlay" ref={overlayRef} style={{ pointerEvents: 'none' }}>
+            <div className="ar-overlay" ref={setOverlayElement} style={{ pointerEvents: 'none' }}>
                 {xrSessionActive && (
                     <button 
                         onClick={takeScreenshot}
