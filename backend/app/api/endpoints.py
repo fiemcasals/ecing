@@ -4,15 +4,15 @@ from typing import List, Optional
 import shutil
 import os
 import uuid
+import datetime
 
 from .. import models, schemas
 from ..database import get_db
 from ..services.geolocation import get_nearby_objects
 
-router = APIRouter()
-
-UPLOAD_DIR = "uploads"
+LOGS_BASE_DIR = "logs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(LOGS_BASE_DIR, exist_ok=True)
 
 @router.post("/pois/", response_model=schemas.POI)
 def create_poi(
@@ -148,3 +148,18 @@ def delete_poi(poi_id: int, db: Session = Depends(get_db)):
     db.delete(db_poi)
     db.commit()
     return {"message": "POI deleted successfully"}
+
+@router.post("/logs/")
+def receive_logs(entry: schemas.LogEntry):
+    session_dir = os.path.join(LOGS_BASE_DIR, entry.session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    
+    log_file = os.path.join(session_dir, "events.log")
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {entry.message}\n")
+        if entry.metadata:
+            f.write(f"    Metadata: {entry.metadata}\n")
+            
+    return {"status": "ok"}

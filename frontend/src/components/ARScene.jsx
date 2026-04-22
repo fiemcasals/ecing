@@ -94,8 +94,20 @@ export default function ARScene() {
     const [status, setStatus] = useState("Obteniendo GPS...");
     const [activePoi, setActivePoi] = useState(null);
     const [xrSessionActive, setXrSessionActive] = useState(false);
-    const [debugLogs, setDebugLogs] = useState(["WebXR Diagnostics Active"]);
-    const addLog = (msg) => setDebugLogs(prev => [...prev, msg].slice(-6));
+    const sessionId = useMemo(() => `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, []);
+    const addLog = (msg, meta = null) => {
+        setDebugLogs(prev => [...prev, msg].slice(-6));
+        axios.post(`/api/logs/`, {
+            session_id: sessionId,
+            message: msg,
+            metadata: {
+                ...meta,
+                userAgent: navigator.userAgent,
+                url: window.location.href,
+                secure: window.isSecureContext
+            }
+        }).catch(err => console.error("Logging failed", err));
+    };
 
     const [userLoc, setUserLoc] = useState(null);
     const [anchorLoc, setAnchorLoc] = useState(null);
@@ -103,6 +115,17 @@ export default function ARScene() {
     const [walkData, setWalkData] = useState(null);
     const [camX, setCamX] = useState(0);
     const [camZ, setCamZ] = useState(0);
+
+    // Initial diagnostics
+    useEffect(() => {
+        addLog("Scene Initialization Started");
+        addLog(`WebXR Supported: ${'xr' in navigator}`);
+        if ('xr' in navigator) {
+            navigator.xr.isSessionSupported('immersive-ar').then(sup => {
+                addLog(`immersive-ar Supported: ${sup}`);
+            });
+        }
+    }, [sessionId]);
 
     // Detect if we are in a fully secure context (Valid SSL)
     const isSecure = window.isSecureContext; 
@@ -155,7 +178,15 @@ export default function ARScene() {
     }, [camX, camZ, calibMode, walkData, userLoc, updateCalibration]);
 
     return (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: '#000' }}>
+        <div style={{ 
+            position: 'fixed', 
+            top: 0, 
+            left: 0, 
+            width: '100%', 
+            height: '100%', 
+            background: xrSessionActive ? 'transparent' : '#000',
+            transition: 'background 0.5s ease'
+        }}>
             {!isSecure && (
                 <div style={{ position: 'absolute', top: '15%', left: '10%', right: '10%', background: 'rgba(255,0,0,0.95)', color: 'white', padding: '20px', borderRadius: '15px', zIndex: 10000, textAlign: 'center', boxShadow: '0 0 20px rgba(0,0,0,0.5)' }}>
                     <h2 style={{margin:0}}>⚠️ CONEXIÓN NO SEGURA</h2>
@@ -170,7 +201,17 @@ export default function ARScene() {
                 onSessionEnd={() => { setXrSessionActive(false); addLog("WebXR Session Ended"); }}
             />
 
-            <Canvas shadows camera={{ fov: 70, near: 0.1, far: 1000 }}>
+            <Canvas 
+                shadows 
+                camera={{ fov: 70, near: 0.1, far: 1000 }}
+                gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true }}
+                onCreated={({ gl }) => {
+                    addLog("Renderer Created", {
+                        vendor: gl.getContext().getParameter(gl.getContext().VENDOR),
+                        renderer: gl.getContext().getParameter(gl.getContext().RENDERER)
+                    });
+                }}
+            >
                 <XR>
                     <Controllers />
                     <SceneContent 

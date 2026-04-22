@@ -17,3 +17,8 @@ class POI(POIBase):
 
     class Config:
         from_attributes = True
+
+class LogEntry(BaseModel):
+    session_id: str
+    message: str
+    metadata: Optional[dict] = None
