@@ -14,8 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia el resto del código
 COPY . .
 
-# Directorio para subidas
-RUN mkdir -p uploads
+# Directorios para persistencia
+RUN mkdir -p uploads logs
 
 # Exponemos el puerto (ejemplo para Django/FastAPI)
 EXPOSE 8000

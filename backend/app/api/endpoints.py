@@ -151,15 +151,24 @@ def delete_poi(poi_id: int, db: Session = Depends(get_db)):
 
 @router.post("/logs/")
 def receive_logs(entry: schemas.LogEntry):
+    # Log to console for real-time visibility (docker logs)
+    print(f"--- LOG RECV [{entry.session_id}] ---")
+    print(f"Message: {entry.message}")
+    if entry.metadata:
+        print(f"Metadata: {entry.metadata}")
+    
     session_dir = os.path.join(LOGS_BASE_DIR, entry.session_id)
     os.makedirs(session_dir, exist_ok=True)
     
     log_file = os.path.join(session_dir, "events.log")
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] {entry.message}\n")
-        if entry.metadata:
-            f.write(f"    Metadata: {entry.metadata}\n")
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {entry.message}\n")
+            if entry.metadata:
+                f.write(f"    Metadata: {entry.metadata}\n")
+    except Exception as e:
+        print(f"FAILED TO WRITE LOG FILE: {e}")
             
     return {"status": "ok"}

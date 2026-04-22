@@ -68,7 +68,7 @@ function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, worldRotation
 
     return (
         <group ref={worldRef}>
-            {isCalibrated && (
+            {(isCalibrated && calibMode === 'calibrated') && (
                 <>
                     <Grid position={[0, -0.01, 0]} args={[400, 400]} cellColor="#4ecdc4" sectionColor="#4ecdc4" fadeDistance={100} infiniteGrid />
                     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
@@ -115,6 +115,26 @@ export default function ARScene() {
     const [walkData, setWalkData] = useState(null);
     const [camX, setCamX] = useState(0);
     const [camZ, setCamZ] = useState(0);
+    const overlayRef = useRef();
+
+    const takeScreenshot = () => {
+        addLog("Intentando capturar...");
+        const canvas = document.querySelector('canvas');
+        if (canvas) {
+            try {
+                const dataURL = canvas.toDataURL('image/png');
+                const link = document.createElement('a');
+                link.download = `ar-capture-${Date.now()}.png`;
+                link.href = dataURL;
+                link.click();
+                addLog("✅ Captura exitosa (descargada)");
+            } catch (err) {
+                addLog(`❌ Error captura: ${err.message}`);
+            }
+        } else {
+            addLog("❌ Canvas no encontrado");
+        }
+    };
 
     // Initial diagnostics
     useEffect(() => {
@@ -199,6 +219,10 @@ export default function ARScene() {
                 onError={(err) => addLog(`WebXR Error: ${err.message || 'Desconocido'}`)}
                 onSessionStart={() => { setXrSessionActive(true); addLog("WebXR Session Started"); }}
                 onSessionEnd={() => { setXrSessionActive(false); addLog("WebXR Session Ended"); }}
+                sessionInit={{
+                    requiredFeatures: ['local-floor', 'dom-overlay'],
+                    domOverlay: { root: overlayRef.current }
+                }}
             />
 
             <Canvas 
@@ -216,13 +240,39 @@ export default function ARScene() {
                     <Controllers />
                     <SceneContent 
                         pois={pois} anchorLoc={anchorLoc} camX={camX} camZ={camZ} 
-                        isCalibrated={calibMode === 'calibrated'} 
+                        isCalibrated={isCalibrated} 
+                        calibMode={calibMode}
                         worldRotation={worldRotation} onPoiClick={setActivePoi}
                     />
                 </XR>
             </Canvas>
 
-            <div className="ar-overlay" style={{ pointerEvents: 'none' }}>
+            <div className="ar-overlay" ref={overlayRef} style={{ pointerEvents: 'none' }}>
+                {xrSessionActive && (
+                    <button 
+                        onClick={takeScreenshot}
+                        style={{
+                            position: 'absolute',
+                            bottom: '100px',
+                            right: '20px',
+                            background: 'rgba(255,255,255,0.2)',
+                            backdropFilter: 'blur(10px)',
+                            border: '2px solid white',
+                            borderRadius: '50%',
+                            width: '60px',
+                            height: '60px',
+                            fontSize: '24px',
+                            pointerEvents: 'auto',
+                            zIndex: 10000,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            boxShadow: '0 0 15px rgba(0,0,0,0.5)'
+                        }}
+                    >
+                        📸
+                    </button>
+                )}
                 <div style={{ textAlign: 'center', pointerEvents: 'auto' }}>
                     <div style={{ background: 'rgba(0,0,0,0.85)', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4' }}>{status}</div>
                 </div>
