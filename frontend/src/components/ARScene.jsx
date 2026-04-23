@@ -66,9 +66,7 @@ function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, calibMode, wo
     const { camera } = useThree();
 
     useFrame(() => {
-        if (worldRef.current) {
-            // "Anti-Double Movement" logic:
-            // We rotate the GPS-based offset into the calibrated world space
+        if (worldRef.current && isCalibrated) {
             const angleRad = THREE.MathUtils.degToRad(worldRotation);
             const cosA = Math.cos(angleRad);
             const sinA = Math.sin(angleRad);
@@ -77,16 +75,16 @@ function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, calibMode, wo
             const gpsX = camX;
             const gpsZ = camZ;
             
-            // Rotate GPS offset to match world rotation
+            // Rotate GPS offset into XR space
             const rotatedX = gpsX * cosA - gpsZ * sinA;
             const rotatedZ = gpsX * sinA + gpsZ * cosA;
 
-            // Set world group position so that (rotatedX, rotatedZ) in world coords 
-            // aligns with (camera.position.x, camera.position.z) in XR local coords.
-            // worldGroup.pos + gpsOffset = camera.pos => worldGroup.pos = camera.pos - gpsOffset
+            // Anchor the world group so that its internal (rotatedX, rotatedZ) 
+            // point is physically located at the camera's current XR position.
+            // This translates the entire ground-aligned map to the user's location.
             worldRef.current.position.set(
                 camera.position.x - rotatedX, 
-                -1.4, 
+                -1.4, // Baseline height
                 camera.position.z - rotatedZ
             );
             worldRef.current.rotation.y = angleRad;
@@ -97,7 +95,8 @@ function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, calibMode, wo
         <group ref={worldRef}>
             {(isCalibrated && calibMode === 'calibrated') && (
                 <>
-                    <Grid position={[0, -0.01, 0]} args={[400, 400]} cellColor="#4ecdc4" sectionColor="#4ecdc4" fadeDistance={100} infiniteGrid />
+                    {/* Grid set to 1m squares for visual verification */}
+                    <Grid position={[0, -0.01, 0]} args={[400, 400]} cellColor="#4ecdc4" sectionColor="#4ecdc4" fadeDistance={100} sectionSize={10} cellSize={1} infiniteGrid />
                     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
                         <ringGeometry args={[1, 1.1, 32]} />
                         <meshBasicMaterial color="#FF6B6B" transparent opacity={0.5} />
@@ -144,7 +143,7 @@ export default function ARScene() {
         }).catch(err => console.error("Logging failed", err));
     };
 
-    const [userLoc, setUserLoc] = useState(null);
+    const [userLoc, setUserLoc] = useState({ lat: 0, lon: 0, accuracy: 0 });
     const [anchorLoc, setAnchorLoc] = useState(null);
     const [calibMode, setCalibMode] = useState(isCalibrated ? 'calibrated' : 'idle');
     const [walkData, setWalkData] = useState(null);
@@ -152,14 +151,15 @@ export default function ARScene() {
     const [camZ, setCamZ] = useState(0);
     const [maxDistance, setMaxDistance] = useState(2.0); // 2km default
     const [showCreateModal, setShowCreateModal] = useState(false);
+    const [showStats, setShowStats] = useState(false);
     const [overlayElement, setOverlayElement] = useState(null);
-    const xrCameraRef = useRef(null);
+    const xrCameraRef = useRef({ x: 0, y: 0, z: 0 });
 
-    // Track XR Camera position for calibration
+    // Track XR Camera position for calibration and stats
     const XRTracker = () => {
         const { camera } = useThree();
         useFrame(() => {
-            xrCameraRef.current = camera.position.clone();
+            xrCameraRef.current = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
         });
         return null;
     };
@@ -212,12 +212,17 @@ export default function ARScene() {
 
         if ("geolocation" in navigator) {
             watchId = navigator.geolocation.watchPosition((pos) => {
-                const { latitude, longitude } = pos.coords;
+                const { latitude, longitude, accuracy } = pos.coords;
+                setUserLoc({ lat: latitude, lon: longitude, accuracy });
+                
                 setAnchorLoc(curr => {
-                    if (!curr) { fetchPOIs(latitude, longitude); return { lat: latitude, lon: longitude }; }
+                    if (!curr) { 
+                        fetchPOIs(latitude, longitude); 
+                        addLog(`Anchor Set: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+                        return { lat: latitude, lon: longitude }; 
+                    }
                     return curr;
                 });
-                setUserLoc({ lat: latitude, lon: longitude });
             }, (err) => addLog(`GPS Error: ${err.message}`), { enableHighAccuracy: true });
         }
         return () => navigator.geolocation.clearWatch(watchId);
@@ -369,8 +374,23 @@ export default function ARScene() {
                     </>
                 )}
                 <div style={{ textAlign: 'center', pointerEvents: 'auto' }}>
-                    <div style={{ background: 'rgba(0,0,0,0.85)', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4' }}>{status}</div>
+                    <div style={{ background: 'rgba(0,0,0,0.85)', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4', cursor: 'pointer' }} onClick={() => setShowStats(!showStats)}>{status}</div>
                 </div>
+
+                {showStats && (
+                    <div style={{ position: 'absolute', top: '150px', left: '20px', background: 'rgba(0,0,0,0.9)', color: '#0f0', padding: '10px', fontSize: '11px', borderRadius: '8px', pointerEvents: 'auto', border: '1px solid #4ECDC4', fontFamily: 'monospace', width: '220px' }}>
+                        <div style={{color: '#4ECDC4', borderBottom: '1px solid #333', marginBottom: '5px', fontWeight: 'bold'}}>DIAGNÓSTICO AVANZADO</div>
+                        <div>GPS: {userLoc.lat?.toFixed(6)}, {userLoc.lon?.toFixed(6)}</div>
+                        <div>Precisión GPS: {userLoc.accuracy?.toFixed(1)}m</div>
+                        <div>OFFSET (E/N): {camX?.toFixed(1)}m, {camZ?.toFixed(1)}m</div>
+                        <div>XR CAM: {xrCameraRef.current.x?.toFixed(1)}, {xrCameraRef.current.y?.toFixed(1)}, {xrCameraRef.current.z?.toFixed(1)}</div>
+                        <div>MUNDO ROT: {worldRotation?.toFixed(1)}°</div>
+                        <div style={{marginTop: '5px', color: '#ffbd2e'}}>
+                            Dist. Visual (Rel): {Math.hypot(xrCameraRef.current.x - (camX * Math.cos(worldRotation*Math.PI/180) - camZ * Math.sin(worldRotation*Math.PI/180)), xrCameraRef.current.z - (camX * Math.sin(worldRotation*Math.PI/180) + camZ * Math.cos(worldRotation*Math.PI/180))).toFixed(1)}m
+                        </div>
+                        <button onClick={() => updateCalibration(0)} style={{marginTop: '10px', width: '100%', fontSize: '10px', padding: '5px'}}>Reset Rotación</button>
+                    </div>
+                )}
 
                 {calibMode === 'idle' && anchorLoc && (
                     <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.9)', padding: '20px', borderRadius: '12px', pointerEvents: 'auto', textAlign: 'center', width: '85%', border: '2px solid #4ECDC4' }}>
