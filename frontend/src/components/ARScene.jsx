@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import axios from 'axios';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { ARButton, XR, Controllers } from '@react-three/xr';
 import { Text, Billboard, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import { useCalibration } from '../context/CalibrationContext';
+import { createPortal } from 'react-dom';
 
 const API_URL = ""; 
 
@@ -27,7 +28,7 @@ function calculateDistanceAndBearing(lat1, lon1, lat2, lon2) {
 
 // --- 3D COMPONENTS ---
 
-function POIMarker({ poi, anchorLoc, userPos, onClick }) {
+function POIMarker({ poi, anchorLoc, userPos, maxDistance, onClick }) {
     const coords = useMemo(() => {
         const { distance, bearing } = calculateDistanceAndBearing(anchorLoc.lat, anchorLoc.lon, poi.lat, poi.lon);
         const bearingRad = bearing * Math.PI / 180;
@@ -35,6 +36,10 @@ function POIMarker({ poi, anchorLoc, userPos, onClick }) {
     }, [poi, anchorLoc]);
 
     const distToUser = Math.hypot(coords.x - userPos.x, coords.z - userPos.z);
+    
+    // Clipping based on user-set maxDistance (converted from km to m)
+    if (distToUser > maxDistance * 1000) return null;
+
     const scale = Math.min(3, Math.max(1, distToUser / 20));
 
     return (
@@ -56,13 +61,35 @@ function POIMarker({ poi, anchorLoc, userPos, onClick }) {
     );
 }
 
-function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, calibMode, worldRotation, onPoiClick }) {
+function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, calibMode, worldRotation, maxDistance, onPoiClick }) {
     const worldRef = useRef();
+    const { camera } = useThree();
 
     useFrame(() => {
         if (worldRef.current) {
-            worldRef.current.position.set(-camX, -1.4, -camZ);
-            worldRef.current.rotation.y = THREE.MathUtils.degToRad(worldRotation);
+            // "Anti-Double Movement" logic:
+            // We rotate the GPS-based offset into the calibrated world space
+            const angleRad = THREE.MathUtils.degToRad(worldRotation);
+            const cosA = Math.cos(angleRad);
+            const sinA = Math.sin(angleRad);
+            
+            // Current GPS position of user relative to anchor
+            const gpsX = camX;
+            const gpsZ = camZ;
+            
+            // Rotate GPS offset to match world rotation
+            const rotatedX = gpsX * cosA - gpsZ * sinA;
+            const rotatedZ = gpsX * sinA + gpsZ * cosA;
+
+            // Set world group position so that (rotatedX, rotatedZ) in world coords 
+            // aligns with (camera.position.x, camera.position.z) in XR local coords.
+            // worldGroup.pos + gpsOffset = camera.pos => worldGroup.pos = camera.pos - gpsOffset
+            worldRef.current.position.set(
+                camera.position.x - rotatedX, 
+                -1.4, 
+                camera.position.z - rotatedZ
+            );
+            worldRef.current.rotation.y = angleRad;
         }
     });
 
@@ -76,7 +103,14 @@ function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, calibMode, wo
                         <meshBasicMaterial color="#FF6B6B" transparent opacity={0.5} />
                     </mesh>
                     {pois.map(poi => (
-                        <POIMarker key={poi.id} poi={poi} anchorLoc={anchorLoc} userPos={{x: camX, z: camZ}} onClick={() => onPoiClick(poi)} />
+                        <POIMarker 
+                            key={poi.id} 
+                            poi={poi} 
+                            anchorLoc={anchorLoc} 
+                            userPos={{x: camX, z: camZ}} 
+                            maxDistance={maxDistance}
+                            onClick={() => onPoiClick(poi)} 
+                        />
                     ))}
                 </>
             )}
@@ -116,7 +150,19 @@ export default function ARScene() {
     const [walkData, setWalkData] = useState(null);
     const [camX, setCamX] = useState(0);
     const [camZ, setCamZ] = useState(0);
+    const [maxDistance, setMaxDistance] = useState(2.0); // 2km default
+    const [showCreateModal, setShowCreateModal] = useState(false);
     const [overlayElement, setOverlayElement] = useState(null);
+    const xrCameraRef = useRef(null);
+
+    // Track XR Camera position for calibration
+    const XRTracker = () => {
+        const { camera } = useThree();
+        useFrame(() => {
+            xrCameraRef.current = camera.position.clone();
+        });
+        return null;
+    };
 
     const takeScreenshot = () => {
         addLog("Intentando capturar...");
@@ -155,7 +201,9 @@ export default function ARScene() {
         let watchId;
         const fetchPOIs = async (lat, lon) => {
             try {
-                const response = await axios.get(`/api/pois/nearby`, { params: { lat, lon, max_distance: 2.0 } });
+                const response = await axios.get(`/api/pois/nearby`, { 
+                    params: { lat, lon, max_distance: maxDistance } 
+                });
                 setPois(response.data);
                 if (!isCalibrated) setStatus("GPS Listo. Camina para calibrar.");
                 else setStatus("✅ Escena Alineada");
@@ -187,16 +235,51 @@ export default function ARScene() {
     useEffect(() => {
         const TARGET_WALK_DIST = 15;
         if (calibMode === 'walking' && walkData && userLoc) {
-            const walkedDist = Math.hypot(camX - walkData.startX, camZ - walkData.startZ);
-            if (walkedDist >= TARGET_WALK_DIST) {
-                const { bearing } = calculateDistanceAndBearing(walkData.startLat, walkData.startLon, userLoc.lat, userLoc.lon);
-                updateCalibration(-bearing);
+            const walkedDistGps = Math.hypot(camX - walkData.startX, camZ - walkData.startZ);
+            
+            if (walkedDistGps >= TARGET_WALK_DIST) {
+                // GPS Bearing
+                const { bearing: gpsBearing } = calculateDistanceAndBearing(walkData.startLat, walkData.startLon, userLoc.lat, userLoc.lon);
+                
+                // XR Bearing (In Three.js, -z is forward)
+                const xrVec = {
+                    x: xrCameraRef.current.x - walkData.startXrX,
+                    z: xrCameraRef.current.z - walkData.startXrZ
+                };
+                const xrBearingRad = Math.atan2(xrVec.x, -xrVec.z);
+                const xrBearingDeg = (xrBearingRad * 180 / Math.PI + 360) % 360;
+
+                // The rotation we need to apply to the world to align it with North
+                const alignmentRotation = gpsBearing - xrBearingDeg;
+                
+                updateCalibration(alignmentRotation);
                 setCalibMode('calibrated');
                 setStatus("✅ Calibración Exitosa");
-                addLog("Distancia completada. Norte fijado.");
+                addLog(`Calibrado. GpsBrng: ${gpsBearing.toFixed(1)}, XrBrng: ${xrBearingDeg.toFixed(1)}`);
             }
         }
-    }, [camX, camZ, calibMode, walkData, userLoc, updateCalibration]);
+    }, [camX, camZ, calibMode, walkData, userLoc, updateCalibration, maxDistance]);
+
+    const handleCreatePOI = async (formData) => {
+        try {
+            const data = new FormData();
+            data.append('name', formData.name);
+            data.append('lat', userLoc.lat);
+            data.append('lon', userLoc.lon);
+            data.append('description', formData.description || "");
+            
+            await axios.post('/api/pois/', data);
+            setShowCreateModal(false);
+            // Refresh POIs
+            const response = await axios.get(`/api/pois/nearby`, { 
+                params: { lat: userLoc.lat, lon: userLoc.lon, max_distance: maxDistance } 
+            });
+            setPois(response.data);
+            addLog("POI Creado correctamente");
+        } catch (err) {
+            addLog(`Error creando POI: ${err.message}`);
+        }
+    };
 
     return (
         <div style={{ 
@@ -241,40 +324,49 @@ export default function ARScene() {
             >
                 <XR>
                     <Controllers />
+                    <XRTracker />
                     <SceneContent 
                         pois={pois} anchorLoc={anchorLoc} camX={camX} camZ={camZ} 
                         isCalibrated={isCalibrated} 
                         calibMode={calibMode}
-                        worldRotation={worldRotation} onPoiClick={setActivePoi}
+                        worldRotation={worldRotation} 
+                        maxDistance={maxDistance}
+                        onPoiClick={setActivePoi}
                     />
                 </XR>
             </Canvas>
 
             <div className="ar-overlay" ref={setOverlayElement} style={{ pointerEvents: 'none' }}>
                 {xrSessionActive && (
-                    <button 
-                        onClick={takeScreenshot}
-                        style={{
-                            position: 'absolute',
-                            bottom: '100px',
-                            right: '20px',
-                            background: 'rgba(255,255,255,0.2)',
-                            backdropFilter: 'blur(10px)',
-                            border: '2px solid white',
-                            borderRadius: '50%',
-                            width: '60px',
-                            height: '60px',
-                            fontSize: '24px',
-                            pointerEvents: 'auto',
-                            zIndex: 10000,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            boxShadow: '0 0 15px rgba(0,0,0,0.5)'
-                        }}
-                    >
-                        📸
-                    </button>
+                    <>
+                        <button 
+                            onClick={takeScreenshot}
+                            style={{
+                                position: 'absolute', bottom: '100px', right: '20px',
+                                background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(10px)',
+                                border: '2px solid white', borderRadius: '50%',
+                                width: '60px', height: '60px', fontSize: '24px',
+                                pointerEvents: 'auto', zIndex: 10000,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center'
+                            }}
+                        >
+                            📸
+                        </button>
+                        <button 
+                            onClick={() => setShowCreateModal(true)}
+                            style={{
+                                position: 'absolute', bottom: '100px', left: '20px',
+                                background: '#4ECDC4', color: 'white',
+                                border: 'none', borderRadius: '50%',
+                                width: '60px', height: '60px', fontSize: '24px',
+                                pointerEvents: 'auto', zIndex: 10000,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                boxShadow: '0 0 15px rgba(78,205,196,0.5)'
+                            }}
+                        >
+                            ➕
+                        </button>
+                    </>
                 )}
                 <div style={{ textAlign: 'center', pointerEvents: 'auto' }}>
                     <div style={{ background: 'rgba(0,0,0,0.85)', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4' }}>{status}</div>
@@ -284,9 +376,27 @@ export default function ARScene() {
                     <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.9)', padding: '20px', borderRadius: '12px', pointerEvents: 'auto', textAlign: 'center', width: '85%', border: '2px solid #4ECDC4' }}>
                         <h3 style={{color: '#4ECDC4', marginTop: 0}}>Paso 1: Calibración</h3>
                         <p style={{fontSize: '0.9rem', color: '#ccc'}}>1. Apunta el celular hacia el frente.<br/>2. Camina 15 metros en línea recta sin girar.</p>
-                        <button onClick={() => { setCalibMode('walking'); setWalkData({ startLat: userLoc.lat, startLon: userLoc.lon, startX: camX, startZ: camZ }); }} className="primary" style={{width:'100%', padding:'15px'}}>Iniciar Caminata (15m)</button>
+                        <button onClick={() => { 
+                            setCalibMode('walking'); 
+                            setWalkData({ 
+                                startLat: userLoc.lat, startLon: userLoc.lon, 
+                                startX: camX, startZ: camZ,
+                                startXrX: xrCameraRef.current.x, startXrZ: xrCameraRef.current.z
+                            }); 
+                        }} className="primary" style={{width:'100%', padding:'15px'}}>Iniciar Caminata (15m)</button>
                     </div>
                 )}
+
+                {/* Distance Configurator */}
+                <div style={{ position: 'absolute', top: '20px', left: '20px', background: 'rgba(0,0,0,0.7)', padding: '10px', borderRadius: '10px', pointerEvents: 'auto', color: 'white', border: '1px solid rgba(255,255,255,0.3)' }}>
+                    <div style={{fontSize: '0.7rem', marginBottom: '5px'}}>Alcance Máximo: {maxDistance < 1 ? `${(maxDistance*1000).toFixed(0)}m` : `${maxDistance.toFixed(1)}km`}</div>
+                    <input 
+                        type="range" min="0.05" max="3" step="0.05" 
+                        value={maxDistance} 
+                        onChange={(e) => setMaxDistance(parseFloat(e.target.value))}
+                        style={{width: '120px'}}
+                    />
+                </div>
 
                 {calibMode === 'walking' && (
                     <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.9)', padding: '20px', borderRadius: '12px', color: 'white', textAlign: 'center', border: '2px solid #FF6B6B' }}>
@@ -301,6 +411,21 @@ export default function ARScene() {
                         <h2 style={{ color: '#4ECDC4', marginTop: 0 }}>{activePoi.name}</h2>
                         <p style={{color: '#eee'}}>{activePoi.description}</p>
                         <button onClick={() => setActivePoi(null)} className="primary" style={{ marginTop: '20px', width:'100%' }}>Cerrar</button>
+                    </div>
+                )}
+
+                {showCreateModal && (
+                    <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(20,20,30,0.98)', border: '1px solid #4ECDC4', borderRadius: '15px', padding: '20px', pointerEvents: 'auto', width: '85%', zIndex: 20000 }}>
+                        <h2 style={{ color: '#4ECDC4', marginTop: 0 }}>Crear Punto Aquí</h2>
+                        <input id="new-poi-name" placeholder="Nombre del punto" style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #444', background: '#222', color: 'white' }} />
+                        <textarea id="new-poi-desc" placeholder="Descripción (opcional)" style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #444', background: '#222', color: 'white', height: '80px' }} />
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button onClick={() => setShowCreateModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #666', background: 'transparent', color: 'white' }}>Cancelar</button>
+                            <button onClick={() => handleCreatePOI({ 
+                                name: document.getElementById('new-poi-name').value, 
+                                description: document.getElementById('new-poi-desc').value 
+                            })} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#4ECDC4', color: '#1a1a2e', fontWeight: 'bold' }}>Guardar</button>
+                        </div>
                     </div>
                 )}
 
