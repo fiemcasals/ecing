@@ -122,40 +122,35 @@ function SceneContent({ pois, anchorLoc, camX, camZ, isCalibrated, calibMode, wo
 // --- MAIN COMPONENT ---
 
 export default function ARScene() {
-    const { isCalibrated, worldRotation, updateCalibration } = useCalibration();
+    const { isCalibrated, worldRotation, updateCalibration, savedPoints, addSavedPoint, calibSteps, setCalibSteps, resetCalibration } = useCalibration();
     const [pois, setPois] = useState([]);
     const [status, setStatus] = useState("Obteniendo GPS...");
     const [activePoi, setActivePoi] = useState(null);
     const [xrSessionActive, setXrSessionActive] = useState(false);
     const [debugLogs, setDebugLogs] = useState(["WebXR Diagnostics Active"]);
     const sessionId = useMemo(() => `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, []);
-    const addLog = (msg, meta = null) => {
-        setDebugLogs(prev => [...prev, msg].slice(-6));
-        axios.post(`/api/logs/`, {
-            session_id: sessionId,
-            message: msg,
-            metadata: {
-                ...meta,
-                userAgent: navigator.userAgent,
-                url: window.location.href,
-                secure: window.isSecureContext
-            }
-        }).catch(err => console.error("Logging failed", err));
-    };
-
+    
     const [userLoc, setUserLoc] = useState({ lat: 0, lon: 0, accuracy: 0 });
     const [anchorLoc, setAnchorLoc] = useState(null);
     const [calibMode, setCalibMode] = useState(isCalibrated ? 'calibrated' : 'idle');
-    const [walkData, setWalkData] = useState(null);
     const [camX, setCamX] = useState(0);
     const [camZ, setCamZ] = useState(0);
-    const [maxDistance, setMaxDistance] = useState(2.0); // 2km default
+    const [maxDistance, setMaxDistance] = useState(2.0);
     const [showCreateModal, setShowCreateModal] = useState(false);
+    const [showSavedPointsModal, setShowSavedPointsModal] = useState(false);
+    const [showNewHitoModal, setShowNewHitoModal] = useState(false);
     const [showStats, setShowStats] = useState(false);
     const [overlayElement, setOverlayElement] = useState(null);
     const xrCameraRef = useRef({ x: 0, y: 0, z: 0 });
 
-    // Track XR Camera position for calibration and stats
+    const addLog = (msg, meta = null) => {
+        setDebugLogs(prev => [...prev, msg].slice(-6));
+        axios.post(`/api/logs/`, {
+            session_id: sessionId, message: msg,
+            metadata: { ...meta, userAgent: navigator.userAgent, url: window.location.href, secure: window.isSecureContext }
+        }).catch(() => {});
+    };
+
     const XRTracker = () => {
         const { camera } = useThree();
         useFrame(() => {
@@ -165,7 +160,6 @@ export default function ARScene() {
     };
 
     const takeScreenshot = () => {
-        addLog("Intentando capturar...");
         const canvas = document.querySelector('canvas');
         if (canvas) {
             try {
@@ -174,39 +168,18 @@ export default function ARScene() {
                 link.download = `ar-capture-${Date.now()}.png`;
                 link.href = dataURL;
                 link.click();
-                addLog("✅ Captura exitosa (descargada)");
-            } catch (err) {
-                addLog(`❌ Error captura: ${err.message}`);
-            }
-        } else {
-            addLog("❌ Canvas no encontrado");
+                addLog("✅ Captura exitosa");
+            } catch (err) { addLog(`❌ Error captura: ${err.message}`); }
         }
     };
-
-    // Initial diagnostics
-    useEffect(() => {
-        addLog("Scene Initialization Started");
-        addLog(`WebXR Supported: ${'xr' in navigator}`);
-        if ('xr' in navigator) {
-            navigator.xr.isSessionSupported('immersive-ar').then(sup => {
-                addLog(`immersive-ar Supported: ${sup}`);
-            });
-        }
-    }, [sessionId]);
-
-    // Detect if we are in a fully secure context (Valid SSL)
-    const isSecure = window.isSecureContext; 
 
     useEffect(() => {
         let watchId;
         const fetchPOIs = async (lat, lon) => {
             try {
-                const response = await axios.get(`/api/pois/nearby`, { 
-                    params: { lat, lon, max_distance: maxDistance } 
-                });
+                const response = await axios.get(`/api/pois/nearby`, { params: { lat, lon, max_distance: maxDistance } });
                 setPois(response.data);
-                if (!isCalibrated) setStatus("GPS Listo. Camina para calibrar.");
-                else setStatus("✅ Escena Alineada");
+                setStatus(isCalibrated ? "✅ Escena Alineada" : "GPS Listo. Calibra para ver objetos.");
             } catch (err) { addLog(`Error Fetch: ${err.message}`); }
         };
 
@@ -214,19 +187,14 @@ export default function ARScene() {
             watchId = navigator.geolocation.watchPosition((pos) => {
                 const { latitude, longitude, accuracy } = pos.coords;
                 setUserLoc({ lat: latitude, lon: longitude, accuracy });
-                
-                setAnchorLoc(curr => {
-                    if (!curr) { 
-                        fetchPOIs(latitude, longitude); 
-                        addLog(`Anchor Set: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
-                        return { lat: latitude, lon: longitude }; 
-                    }
-                    return curr;
-                });
+                if (!anchorLoc) {
+                    setAnchorLoc({ lat: latitude, lon: longitude });
+                    fetchPOIs(latitude, longitude);
+                }
             }, (err) => addLog(`GPS Error: ${err.message}`), { enableHighAccuracy: true });
         }
         return () => navigator.geolocation.clearWatch(watchId);
-    }, [isCalibrated]);
+    }, [anchorLoc, isCalibrated, maxDistance]);
 
     useEffect(() => {
         if (anchorLoc && userLoc) {
@@ -237,192 +205,148 @@ export default function ARScene() {
         }
     }, [userLoc, anchorLoc]);
 
-    useEffect(() => {
-        const TARGET_WALK_DIST = 15;
-        if (calibMode === 'walking' && walkData && userLoc) {
-            const walkedDistGps = Math.hypot(camX - walkData.startX, camZ - walkData.startZ);
+    // HANDLERS PARA CALIBRACIÓN MANUAL
+    const handleSelectHito = (hito) => {
+        if (!calibSteps.pointA) {
+            // Primer Punto (Ancla)
+            const newPointA = {
+                lat: hito.lat,
+                lon: hito.lon,
+                xrX: xrCameraRef.current.x,
+                xrZ: xrCameraRef.current.z
+            };
+            setCalibSteps({ ...calibSteps, pointA: newPointA });
+            setAnchorLoc({ lat: hito.lat, lon: hito.lon });
+            addLog(`Punto A fijado en ${hito.name}`);
+            setShowSavedPointsModal(false);
+        } else {
+            // Segundo Punto (Orientación)
+            const newPointB = {
+                lat: hito.lat,
+                lon: hito.lon,
+                xrX: xrCameraRef.current.x,
+                xrZ: xrCameraRef.current.z
+            };
             
-            if (walkedDistGps >= TARGET_WALK_DIST) {
-                // GPS Bearing
-                const { bearing: gpsBearing } = calculateDistanceAndBearing(walkData.startLat, walkData.startLon, userLoc.lat, userLoc.lon);
-                
-                // XR Bearing (In Three.js, -z is forward)
-                const xrVec = {
-                    x: xrCameraRef.current.x - walkData.startXrX,
-                    z: xrCameraRef.current.z - walkData.startXrZ
-                };
-                const xrBearingRad = Math.atan2(xrVec.x, -xrVec.z);
-                const xrBearingDeg = (xrBearingRad * 180 / Math.PI + 360) % 360;
+            // 1. Rumbo Geográfico (GPS)
+            const { bearing: gpsBearing } = calculateDistanceAndBearing(
+                calibSteps.pointA.lat, calibSteps.pointA.lon,
+                newPointB.lat, newPointB.lon
+            );
 
-                // The rotation we need to apply to the world to align it with North
-                const alignmentRotation = gpsBearing - xrBearingDeg;
-                
-                updateCalibration(alignmentRotation);
-                setCalibMode('calibrated');
-                setStatus("✅ Calibración Exitosa");
-                addLog(`Calibrado. GpsBrng: ${gpsBearing.toFixed(1)}, XrBrng: ${xrBearingDeg.toFixed(1)}`);
-            }
+            // 2. Rumbo XR (Medido por la cámara)
+            const xrVec = {
+                x: newPointB.xrX - calibSteps.pointA.xrX,
+                z: newPointB.xrZ - calibSteps.pointA.xrZ
+            };
+            const xrBearingRad = Math.atan2(xrVec.x, -xrVec.z);
+            const xrBearingDeg = (xrBearingRad * 180 / Math.PI + 360) % 360;
+
+            // 3. Alineación
+            const finalRotation = gpsBearing - xrBearingDeg;
+            updateCalibration(finalRotation);
+            setCalibMode('calibrated');
+            setCalibSteps({ ...calibSteps, pointB: newPointB });
+            addLog(`Calibración completa: ${finalRotation.toFixed(1)}°`);
+            setShowSavedPointsModal(false);
         }
-    }, [camX, camZ, calibMode, walkData, userLoc, updateCalibration, maxDistance]);
+    };
 
-    const handleCreatePOI = async (formData) => {
-        try {
-            const data = new FormData();
-            data.append('name', formData.name);
-            data.append('lat', userLoc.lat);
-            data.append('lon', userLoc.lon);
-            data.append('description', formData.description || "");
-            
-            await axios.post('/api/pois/', data);
-            setShowCreateModal(false);
-            // Refresh POIs
-            const response = await axios.get(`/api/pois/nearby`, { 
-                params: { lat: userLoc.lat, lon: userLoc.lon, max_distance: maxDistance } 
-            });
-            setPois(response.data);
-            addLog("POI Creado correctamente");
-        } catch (err) {
-            addLog(`Error creando POI: ${err.message}`);
+    const handleCreateHito = (e) => {
+        e.preventDefault();
+        const name = e.target.name.value;
+        const lat = parseFloat(e.target.lat.value);
+        const lon = parseFloat(e.target.lon.value);
+        if (name && !isNaN(lat) && !isNaN(lon)) {
+            addSavedPoint({ name, lat, lon });
+            setShowNewHitoModal(false);
+            addLog(`Hito guardado: ${name}`);
         }
     };
 
     return (
-        <div style={{ 
-            position: 'fixed', 
-            top: 0, 
-            left: 0, 
-            width: '100%', 
-            height: '100%', 
-            background: xrSessionActive ? 'transparent' : '#000',
-            transition: 'background 0.5s ease'
-        }}>
-            {!isSecure && (
-                <div style={{ position: 'absolute', top: '15%', left: '10%', right: '10%', background: 'rgba(255,0,0,0.95)', color: 'white', padding: '20px', borderRadius: '15px', zIndex: 10000, textAlign: 'center', boxShadow: '0 0 20px rgba(0,0,0,0.5)' }}>
-                    <h2 style={{margin:0}}>⚠️ CONEXIÓN NO SEGURA</h2>
-                    <p style={{fontSize:'0.9rem', margin:'10px 0'}}>Chrome no activará la cámara porque el certificado SSL de este sitio es inválido o falta (dice "No Seguro").</p>
-                    <p style={{fontSize:'0.8rem', opacity: 0.8}}>Debes usar un certificado válido (Let's Encrypt) para que WebXR funcione.</p>
-                </div>
-            )}
-
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: xrSessionActive ? 'transparent' : '#000' }}>
             {overlayElement && (
                 <ARButton 
-                    onError={(err) => addLog(`WebXR Error: ${err.message || 'Desconocido'}`)}
-                    onSessionStart={() => { setXrSessionActive(true); addLog("WebXR Session Started"); }}
-                    onSessionEnd={() => { setXrSessionActive(false); addLog("WebXR Session Ended"); }}
-                    sessionInit={{
-                        optionalFeatures: ['local-floor', 'dom-overlay'],
-                        domOverlay: { root: overlayElement }
-                    }}
+                    sessionInit={{ optionalFeatures: ['local-floor', 'dom-overlay'], domOverlay: { root: overlayElement } }}
+                    onSessionStart={() => setXrSessionActive(true)}
+                    onSessionEnd={() => setXrSessionActive(false)}
                 />
             )}
 
-            <Canvas 
-                shadows 
-                camera={{ fov: 70, near: 0.1, far: 1000 }}
-                gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true }}
-                onCreated={({ gl }) => {
-                    addLog("Renderer Created", {
-                        vendor: gl.getContext().getParameter(gl.getContext().VENDOR),
-                        renderer: gl.getContext().getParameter(gl.getContext().RENDERER)
-                    });
-                }}
-            >
+            <Canvas shadows camera={{ fov: 70, near: 0.1, far: 1000 }} gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true }}>
                 <XR>
                     <Controllers />
                     <XRTracker />
                     <SceneContent 
                         pois={pois} anchorLoc={anchorLoc} camX={camX} camZ={camZ} 
-                        isCalibrated={isCalibrated} 
-                        calibMode={calibMode}
-                        worldRotation={worldRotation} 
-                        maxDistance={maxDistance}
-                        onPoiClick={setActivePoi}
+                        isCalibrated={isCalibrated} worldRotation={worldRotation} 
+                        maxDistance={maxDistance} onPoiClick={setActivePoi}
                     />
                 </XR>
             </Canvas>
 
             <div className="ar-overlay" ref={setOverlayElement} style={{ pointerEvents: 'none' }}>
+                {/* BOTONES PRINCIPALES */}
                 {xrSessionActive && (
-                    <>
-                        <button 
-                            onClick={takeScreenshot}
-                            style={{
-                                position: 'absolute', bottom: '100px', right: '20px',
-                                background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(10px)',
-                                border: '2px solid white', borderRadius: '50%',
-                                width: '60px', height: '60px', fontSize: '24px',
-                                pointerEvents: 'auto', zIndex: 10000,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center'
-                            }}
-                        >
-                            📸
-                        </button>
-                        <button 
-                            onClick={() => setShowCreateModal(true)}
-                            style={{
-                                position: 'absolute', bottom: '100px', left: '20px',
-                                background: '#4ECDC4', color: 'white',
-                                border: 'none', borderRadius: '50%',
-                                width: '60px', height: '60px', fontSize: '24px',
-                                pointerEvents: 'auto', zIndex: 10000,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                boxShadow: '0 0 15px rgba(78,205,196,0.5)'
-                            }}
-                        >
-                            ➕
-                        </button>
-                    </>
+                    <div style={{ position: 'absolute', bottom: '100px', width: '100%', display: 'flex', justifyContent: 'space-around', pointerEvents: 'auto' }}>
+                        <button onClick={() => setShowCreateModal(true)} style={{ background: '#4ECDC4', border: 'none', borderRadius: '50%', width: '60px', height: '60px', fontSize: '24px' }}>➕</button>
+                        <button onClick={takeScreenshot} style={{ background: 'rgba(255,255,255,0.2)', border: '2px solid white', borderRadius: '50%', width: '60px', height: '60px', fontSize: '24px' }}>📸</button>
+                        <button onClick={() => setShowSavedPointsModal(true)} style={{ background: '#FF6B6B', border: 'none', borderRadius: '50%', width: '60px', height: '60px', fontSize: '24px', color: 'white' }}>📍</button>
+                    </div>
                 )}
-                <div style={{ textAlign: 'center', pointerEvents: 'auto' }}>
-                    <div style={{ background: 'rgba(0,0,0,0.85)', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4', cursor: 'pointer' }} onClick={() => setShowStats(!showStats)}>{status}</div>
+
+                {/* STATUS BAR */}
+                <div style={{ textAlign: 'center', pointerEvents: 'auto', marginTop: '20px' }}>
+                    <div style={{ background: 'rgba(0,0,0,0.85)', display: 'inline-block', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4' }} onClick={() => setShowStats(!showStats)}>{status}</div>
                 </div>
 
-                {showStats && (
-                    <div style={{ position: 'absolute', top: '150px', left: '20px', background: 'rgba(0,0,0,0.9)', color: '#0f0', padding: '10px', fontSize: '11px', borderRadius: '8px', pointerEvents: 'auto', border: '1px solid #4ECDC4', fontFamily: 'monospace', width: '220px' }}>
-                        <div style={{color: '#4ECDC4', borderBottom: '1px solid #333', marginBottom: '5px', fontWeight: 'bold'}}>DIAGNÓSTICO AVANZADO</div>
-                        <div>GPS: {userLoc.lat?.toFixed(6)}, {userLoc.lon?.toFixed(6)}</div>
-                        <div>Precisión GPS: {userLoc.accuracy?.toFixed(1)}m</div>
-                        <div>OFFSET (E/N): {camX?.toFixed(1)}m, {camZ?.toFixed(1)}m</div>
-                        <div>XR CAM: {xrCameraRef.current.x?.toFixed(1)}, {xrCameraRef.current.y?.toFixed(1)}, {xrCameraRef.current.z?.toFixed(1)}</div>
-                        <div>MUNDO ROT: {worldRotation?.toFixed(1)}°</div>
-                        <div style={{marginTop: '5px', color: '#ffbd2e'}}>
-                            Dist. Visual (Rel): {Math.hypot(xrCameraRef.current.x - (camX * Math.cos(worldRotation*Math.PI/180) - camZ * Math.sin(worldRotation*Math.PI/180)), xrCameraRef.current.z - (camX * Math.sin(worldRotation*Math.PI/180) + camZ * Math.cos(worldRotation*Math.PI/180))).toFixed(1)}m
+                {/* MODAL SELECCIÓN DE HITOS (CALIBRACIÓN) */}
+                {showSavedPointsModal && (
+                    <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(20,20,30,0.98)', border: '2px solid #FF6B6B', borderRadius: '15px', padding: '20px', pointerEvents: 'auto', width: '90%', zIndex: 20000 }}>
+                        <h3 style={{ color: '#FF6B6B', marginTop: 0, textAlign: 'center' }}>{!calibSteps.pointA ? "PASO 1: Seleccionar Punto A" : "PASO 2: Seleccionar Punto B"}</h3>
+                        <p style={{ color: '#ccc', fontSize: '0.85rem', textAlign: 'center', marginBottom: '15px' }}>
+                            <strong>Instrucciones:</strong> Apoye el celular con la cámara apuntando al suelo, y seleccione el punto correspondiente una vez el celular en posición.
+                        </p>
+                        
+                        <div style={{ maxHeight: '300px', overflowY: 'auto', marginBottom: '15px' }}>
+                            {savedPoints.map(p => (
+                                <button key={p.id} onClick={() => handleSelectHito(p)} style={{ width: '100%', padding: '12px', marginBottom: '8px', background: '#333', border: '1px solid #555', color: 'white', borderRadius: '8px', textAlign: 'left' }}>
+                                    {p.name} <span style={{fontSize: '0.7rem', color: '#888'}}>({p.lat.toFixed(5)}, {p.lon.toFixed(5)})</span>
+                                </button>
+                            ))}
                         </div>
-                        <button onClick={() => updateCalibration(0)} style={{marginTop: '10px', width: '100%', fontSize: '10px', padding: '5px'}}>Reset Rotación</button>
+
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button onClick={() => setShowNewHitoModal(true)} style={{ flex: 1, padding: '10px', background: 'transparent', color: '#4ECDC4', border: '1px solid #4ECDC4', borderRadius: '8px' }}>+ Nuevo Hito</button>
+                            <button onClick={() => setShowSavedPointsModal(false)} style={{ flex: 1, padding: '10px', background: '#444', color: 'white', border: 'none', borderRadius: '8px' }}>Cerrar</button>
+                        </div>
+                        {calibSteps.pointA && <button onClick={resetCalibration} style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'rgba(255,0,0,0.2)', border: '1px solid red', color: 'red', borderRadius: '8px' }}>Reiniciar Calibración</button>}
                     </div>
                 )}
 
-                {calibMode === 'idle' && anchorLoc && (
-                    <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.9)', padding: '20px', borderRadius: '12px', pointerEvents: 'auto', textAlign: 'center', width: '85%', border: '2px solid #4ECDC4' }}>
-                        <h3 style={{color: '#4ECDC4', marginTop: 0}}>Paso 1: Calibración</h3>
-                        <p style={{fontSize: '0.9rem', color: '#ccc'}}>1. Apunta el celular hacia el frente.<br/>2. Camina 15 metros en línea recta sin girar.</p>
-                        <button onClick={() => { 
-                            setCalibMode('walking'); 
-                            setWalkData({ 
-                                startLat: userLoc.lat, startLon: userLoc.lon, 
-                                startX: camX, startZ: camZ,
-                                startXrX: xrCameraRef.current.x, startXrZ: xrCameraRef.current.z
-                            }); 
-                        }} className="primary" style={{width:'100%', padding:'15px'}}>Iniciar Caminata (15m)</button>
+                {/* MODAL NUEVO HITO */}
+                {showNewHitoModal && (
+                    <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(20,20,30,0.98)', border: '2px solid #4ECDC4', borderRadius: '15px', padding: '20px', pointerEvents: 'auto', width: '85%', zIndex: 21000 }}>
+                        <h2 style={{ color: '#4ECDC4', marginTop: 0 }}>Nuevo Hito Maestro</h2>
+                        <form onSubmit={handleCreateHito}>
+                            <input name="name" placeholder="Nombre (ej: Esquina Norte)" required style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #444', background: '#222', color: 'white' }} />
+                            <input name="lat" placeholder="Latitud" required defaultValue={userLoc.lat?.toFixed(6)} style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #444', background: '#222', color: 'white' }} />
+                            <input name="lon" placeholder="Longitud" required defaultValue={userLoc.lon?.toFixed(6)} style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #444', background: '#222', color: 'white' }} />
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                                <button type="button" onClick={() => setShowNewHitoModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #666', background: 'transparent', color: 'white' }}>Cancelar</button>
+                                <button type="submit" style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#4ECDC4', color: '#1a1a2e', fontWeight: 'bold' }}>Guardar</button>
+                            </div>
+                        </form>
                     </div>
                 )}
 
-                {/* Distance Configurator */}
-                <div style={{ position: 'absolute', top: '20px', left: '20px', background: 'rgba(0,0,0,0.7)', padding: '10px', borderRadius: '10px', pointerEvents: 'auto', color: 'white', border: '1px solid rgba(255,255,255,0.3)' }}>
-                    <div style={{fontSize: '0.7rem', marginBottom: '5px'}}>Alcance Máximo: {maxDistance < 1 ? `${(maxDistance*1000).toFixed(0)}m` : `${maxDistance.toFixed(1)}km`}</div>
-                    <input 
-                        type="range" min="0.05" max="3" step="0.05" 
-                        value={maxDistance} 
-                        onChange={(e) => setMaxDistance(parseFloat(e.target.value))}
-                        style={{width: '120px'}}
-                    />
-                </div>
-
-                {calibMode === 'walking' && (
-                    <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.9)', padding: '20px', borderRadius: '12px', color: 'white', textAlign: 'center', border: '2px solid #FF6B6B' }}>
-                         <div style={{fontSize: '0.8rem', color: '#FF6B6B'}}>CALIBRANDO...</div>
-                         <h1 style={{margin: '10px 0'}}>{Math.hypot(camX - walkData.startX, camZ - walkData.startZ).toFixed(1)} / 15m</h1>
-                         <p style={{fontSize: '0.7rem'}}>Mantén el celular apuntando al frente</p>
+                {/* RESTO DE MODALES (STATS, CREATE POI, DETALLE) */}
+                {showStats && (
+                    <div style={{ position: 'absolute', top: '80px', left: '20px', background: 'rgba(0,0,0,0.9)', color: '#0f0', padding: '10px', fontSize: '11px', borderRadius: '8px', pointerEvents: 'auto', border: '1px solid #4ECDC4', fontFamily: 'monospace', width: '220px' }}>
+                        <div>GPS PREC: {userLoc.accuracy?.toFixed(1)}m</div>
+                        <div>MUNDO ROT: {worldRotation?.toFixed(1)}°</div>
+                        <div>PASO CALIB: {calibSteps.pointA ? "1 OK, FALTA 2" : "0 OK"}</div>
                     </div>
                 )}
 
@@ -436,21 +360,17 @@ export default function ARScene() {
 
                 {showCreateModal && (
                     <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(20,20,30,0.98)', border: '1px solid #4ECDC4', borderRadius: '15px', padding: '20px', pointerEvents: 'auto', width: '85%', zIndex: 20000 }}>
-                        <h2 style={{ color: '#4ECDC4', marginTop: 0 }}>Crear Punto Aquí</h2>
-                        <input id="new-poi-name" placeholder="Nombre del punto" style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #444', background: '#222', color: 'white' }} />
-                        <textarea id="new-poi-desc" placeholder="Descripción (opcional)" style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #444', background: '#222', color: 'white', height: '80px' }} />
+                        <h2 style={{ color: '#4ECDC4', marginTop: 0 }}>Crear Punto de Interés</h2>
+                        <input id="new-poi-name" placeholder="Nombre" style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #444', background: '#222', color: 'white' }} />
+                        <textarea id="new-poi-desc" placeholder="Descripción" style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #444', background: '#222', color: 'white', height: '80px' }} />
                         <div style={{ display: 'flex', gap: '10px' }}>
                             <button onClick={() => setShowCreateModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #666', background: 'transparent', color: 'white' }}>Cancelar</button>
-                            <button onClick={() => handleCreatePOI({ 
-                                name: document.getElementById('new-poi-name').value, 
-                                description: document.getElementById('new-poi-desc').value 
-                            })} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#4ECDC4', color: '#1a1a2e', fontWeight: 'bold' }}>Guardar</button>
+                            <button onClick={() => handleCreatePOI({ name: document.getElementById('new-poi-name').value, description: document.getElementById('new-poi-desc').value })} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: '#4ECDC4', color: '#1a1a2e', fontWeight: 'bold' }}>Guardar</button>
                         </div>
                     </div>
                 )}
 
                 <div style={{ position: 'absolute', bottom: '20px', right: '20px', background: 'rgba(0,0,0,0.85)', color: '#0f0', padding: '10px', fontSize: '10px', borderRadius: '4px', fontFamily: 'monospace', maxWidth: '200px' }}>
-                    <strong style={{color:'#fff'}}>DEBUG CONSOLE</strong><br/>
                     {debugLogs.map((l, i) => <div key={i}>{l}</div>)}
                 </div>
             </div>
