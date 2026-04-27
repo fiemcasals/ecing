@@ -298,7 +298,11 @@ export default function ARScene() {
 
                 {/* STATUS BAR */}
                 <div style={{ textAlign: 'center', pointerEvents: 'auto', marginTop: '20px' }}>
-                    <div style={{ background: 'rgba(0,0,0,0.85)', display: 'inline-block', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4' }} onClick={() => setShowStats(!showStats)}>{status}</div>
+                    <div style={{ background: 'rgba(0,0,0,0.85)', display: 'inline-block', padding: '10px 20px', borderRadius: '20px', color: 'white', border: '1px solid #4ECDC4' }} onClick={() => setShowStats(!showStats)}>
+                        {!xrSessionActive 
+                            ? "Paso 1: Toca 'Enter AR' abajo" 
+                            : (isCalibrated ? "✅ Escena Alineada" : "Paso 2: Toca el icono 📍 para alinear")}
+                    </div>
                 </div>
 
                 {/* MODAL SELECCIÓN DE HITOS (CALIBRACIÓN) */}
