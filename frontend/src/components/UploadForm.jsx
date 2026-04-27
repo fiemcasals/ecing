@@ -59,12 +59,12 @@ export default function UploadForm() {
             {!isCalibrated ? (
                 <div style={{ background: 'rgba(255,107,107,0.1)', border: '1px solid #FF6B6B', padding: '15px', borderRadius: '8px', marginBottom: '20px', textAlign: 'center' }}>
                     <p style={{ color: '#FF6B6B', fontWeight: 'bold', margin: '0 0 10px 0' }}>⚠️ SE REQUIERE CALIBRACIÓN</p>
-                    <p style={{ fontSize: '0.85rem', color: '#ccc', margin: '0 0 15px 0' }}>Para asegurar que tus puntos aparezcan donde deben, necesitamos que realices la caminata de calibración una vez por sesión.</p>
-                    <button onClick={() => navigate('/ar')} className="primary" style={{ background: '#FF6B6B' }}>Ir a Calibrar (15 metros) 🚶‍♂️</button>
+                    <p style={{ fontSize: '0.85rem', color: '#ccc', margin: '0 0 15px 0' }}>Para que los puntos aparezcan en su lugar exacto, debes alinear el sistema en la pestaña RA (usando la caminata o los hitos maestros).</p>
+                    <button onClick={() => navigate('/ar')} className="primary" style={{ background: '#FF6B6B' }}>Ir a Calibrar / Alinear 📍</button>
                 </div>
             ) : (
                 <div style={{ background: 'rgba(78,205,196,0.1)', border: '1px solid #4ECDC4', padding: '10px', borderRadius: '8px', marginBottom: '20px', textAlign: 'center', color: '#4ECDC4', fontSize: '0.9rem' }}>
-                    ✅ Sistema Calibrado y Listo
+                    ✅ Sistema Alineado y Listo
                 </div>
             )}
 
